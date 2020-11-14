@@ -109,7 +109,9 @@ fn main() {
     let mut f = File::open(TORRENT_FILE).unwrap();
     let mut bytes = Vec::new();
     f.read_to_end(&mut bytes).unwrap();
-    let decoded_original = bdecode(bytes.as_slice()).unwrap();
+    let bytes_slice = bytes.as_slice();
+    // println!("{:?}", std::str::from_utf8(bytes_slice).unwrap());
+    let decoded_original = bdecode(bytes_slice).unwrap();
 
     File::create(MY_TORRENT_COPY)
         .and_then(|mut f| f.write_all(bencode(&decoded_original).unwrap().as_slice()))
