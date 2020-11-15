@@ -9,17 +9,6 @@ pub enum Event {
     Started,
 }
 
-impl serde::Serialize for Event {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        match self {
-            Event::Started => serializer.serialize_str("started"),
-        }
-    }
-}
-
 #[derive(Debug)]
 pub struct TrackerResponse {
     peers: Vec<std::net::SocketAddr>,
@@ -61,7 +50,14 @@ impl Tracker {
     ) -> Result<TrackerResponse, TrackerResponseError> {
         let request = self.client
             .get(announce_url)
-            .query(&[("event", trp.event)])
+            .query(&[
+                (
+                    "event", 
+                    match trp.event {
+                        Event::Started => "started",
+                    }
+                )
+            ])
             .query(&[("port", trp.port.0)])
             .query(&[("uploaded", trp.uploaded.0)])
             .query(&[("downloaded", trp.downloaded.0)])
