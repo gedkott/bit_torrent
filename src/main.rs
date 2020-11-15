@@ -27,8 +27,7 @@ struct Info {
 
 impl std::fmt::Debug for Info {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let pieces =
-            std::str::from_utf8(self.pieces.as_slice()).unwrap_or(&"BINARY_STRING_OF_BYTES");
+        let pieces = std::str::from_utf8(&self.pieces).unwrap_or("BYTES");
         f.debug_struct("Info")
             .field("pieces_length", &self.piece_length)
             .field("private", &self.private)
@@ -37,27 +36,28 @@ impl std::fmt::Debug for Info {
     }
 }
 
-impl From<Bencodable> for MetaInfoFile {
-    fn from(b: Bencodable) -> Self {
+impl From<&Bencodable> for MetaInfoFile {
+    fn from(b: &Bencodable) -> Self {
         let info = match &b {
             Bencodable::Dictionary(btm) => {
                 let info_key = &BencodableByteString::from("info");
                 match &btm[info_key] {
                     Bencodable::Dictionary(btm) => {
                         let piece_length_key = &BencodableByteString::from("piece length");
-                        let pieces_key = &BencodableByteString::from("pieces");
                         let piece_length = match btm[piece_length_key] {
                             Bencodable::Integer(i) => i,
                             _ => panic!("did not find piece length"),
                         };
 
+                        let pieces_key = &BencodableByteString::from("pieces");
                         let pieces = match &btm[pieces_key] {
-                            Bencodable::ByteString(bs) => bs,
+                            Bencodable::ByteString(bs) => bs.as_bytes().to_owned(),
                             _ => panic!("did not find pieces"),
                         };
+
                         Info {
                             piece_length,
-                            pieces: pieces.0.to_owned(),
+                            pieces,
                             private: None,
                         }
                     }
@@ -71,7 +71,7 @@ impl From<Bencodable> for MetaInfoFile {
             Bencodable::Dictionary(btm) => {
                 let info_key = &BencodableByteString::from("announce");
                 match &btm[info_key] {
-                    Bencodable::ByteString(bs) => std::str::from_utf8(&bs.0),
+                    Bencodable::ByteString(bs) => bs.as_string(),
                     _ => panic!("did not find announce"),
                 }
             }
@@ -80,7 +80,7 @@ impl From<Bencodable> for MetaInfoFile {
 
         MetaInfoFile {
             info,
-            announce: announce.unwrap().to_string(),
+            announce: announce.to_string(),
             announce_list: None,
             creation_date: None,
             comment: None,
@@ -90,8 +90,8 @@ impl From<Bencodable> for MetaInfoFile {
     }
 }
 
-const TORRENT_FILE: &'static str = "6201484321_f1a88ca2cb_b_archive.torrent";
-const MY_TORRENT_COPY: &'static str = "myfile.torrent";
+const TORRENT_FILE: &str = "6201484321_f1a88ca2cb_b_archive.torrent";
+const MY_TORRENT_COPY: &str = "myfile.torrent";
 
 fn main() {
     let mut examples = BTreeMap::new();
@@ -111,7 +111,6 @@ fn main() {
     let mut bytes = Vec::new();
     f.read_to_end(&mut bytes).unwrap();
     let bytes_slice = bytes.as_slice();
-    // println!("{:?}", std::str::from_utf8(bytes_slice).unwrap());
     let decoded_original = bdecode(bytes_slice).unwrap();
 
     File::create(MY_TORRENT_COPY)
@@ -131,9 +130,7 @@ fn main() {
 
     let bencodable = decoded_from_new_file_written_with_encoded_original;
 
-    let meta_info = MetaInfoFile::from(bencodable.clone());
-
-    println!("{:#?}", meta_info);
+    let meta_info = MetaInfoFile::from(&bencodable);
 
     let peer_id = { "-qB4030-i.52DyS4ir)l" };
 
@@ -150,49 +147,36 @@ fn main() {
 
     let bencoded = &info.unwrap();
 
-    println!("bencoded info {:#?}", bdecode(bencoded));
-
     let info_hash = {
         let mut hasher = sha1::Sha1::new();
 
         hasher.update(bencoded);
 
         let bytes = hasher.digest().bytes();
-        println!("info hash bytes {:?}", bytes);
 
         let url_encoded =
             percent_encoding::percent_encode(&bytes, percent_encoding::NON_ALPHANUMERIC)
                 .to_string();
 
-        println!(
-            "url encoded {} as bytes {:?}",
-            url_encoded,
-            url_encoded.as_bytes()
-        );
-
         url_encoded
     };
 
-    println!("{:?} {:?}", info_hash, peer_id);
-
-    if let Some(e) = Tracker::new().track(
-        &format!(
-            "{}?info_hash={}&peer_id={}",
-            &meta_info.announce, info_hash, peer_id
-        ),
-        TrackerRequestParameters {
-            port: ClientPort(8999),
-            uploaded: TotalBytes(0),
-            downloaded: TotalBytes(0),
-            left: TotalBytes(0),
-            event: Event::Started,
-        },
-    )
-    .and_then(|resp| {
-        println!("Response {:#?}", resp);
-        Ok(())
-    })
-    .err()
+    if let Some(e) = Tracker::new()
+        .track(
+            &format!(
+                "{}?info_hash={}&peer_id={}",
+                &meta_info.announce, info_hash, peer_id
+            ),
+            TrackerRequestParameters {
+                port: 8999,
+                uploaded: 0,
+                downloaded: 0,
+                left: 0,
+                event: Event::Started,
+            },
+        )
+        .map(|resp| println!("Response {:#?}", resp))
+        .err()
     {
         println!("Error from tracking: {:?}", e);
     }
