@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 #[derive(Clone, Hash, Eq, PartialEq, Ord, PartialOrd)]
-pub struct BencodableByteString(pub Vec<u8>);
+pub struct BencodableByteString(Vec<u8>);
 
 impl std::fmt::Debug for BencodableByteString {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -15,6 +15,16 @@ pub enum Bencodable {
     Integer(i32),
     List(Vec<Bencodable>),
     Dictionary(BTreeMap<BencodableByteString, Bencodable>),
+}
+
+impl BencodableByteString {
+    pub fn as_string(&self) -> &str {
+        std::str::from_utf8(&self.0).unwrap()
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
 }
 
 impl From<&str> for Bencodable {
