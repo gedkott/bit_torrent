@@ -2,7 +2,8 @@ use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::prelude::*;
 
-use bencoding::*;
+mod bencode;
+use bencode::*;
 
 fn main() {
     let mut examples = BTreeMap::new();
