@@ -9,6 +9,6 @@ name = "bit_torrent"
 path = "src/main.rs"
 
 [dependencies]
-reqwest = { version = "0.10", features = ["blocking", "json"] }
+reqwest = { version = "0.10", features = ["blocking"] }
 sha1 = "0.6.0"
 percent-encoding = "*"
