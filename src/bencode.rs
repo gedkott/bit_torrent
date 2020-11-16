@@ -1,11 +1,11 @@
 use std::collections::BTreeMap;
 
 #[derive(Clone, Hash, Eq, PartialEq, Ord, PartialOrd)]
-pub struct BencodableByteString(pub Vec<u8>);
+pub struct BencodableByteString(Vec<u8>);
 
 impl std::fmt::Debug for BencodableByteString {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(std::str::from_utf8(self.0.as_slice()).unwrap_or("BYTES"))
+        f.write_str(std::str::from_utf8(self.0.as_slice()).unwrap_or(&format!("{:02X?}", self.as_bytes())))
     }
 }
 
@@ -17,6 +17,16 @@ pub enum Bencodable {
     Dictionary(BTreeMap<BencodableByteString, Bencodable>),
 }
 
+impl BencodableByteString {
+    pub fn as_string(&self) -> Result<&str, std::str::Utf8Error> {
+        std::str::from_utf8(&self.0)
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
 impl From<&str> for Bencodable {
     fn from(s: &str) -> Self {
         Bencodable::ByteString(BencodableByteString::from(s))
@@ -26,6 +36,12 @@ impl From<&str> for Bencodable {
 impl From<&str> for BencodableByteString {
     fn from(s: &str) -> Self {
         BencodableByteString(s.as_bytes().to_vec())
+    }
+}
+
+impl From<&[u8]> for BencodableByteString {
+    fn from(s: &[u8]) -> Self {
+        BencodableByteString(s.to_vec())
     }
 }
 
