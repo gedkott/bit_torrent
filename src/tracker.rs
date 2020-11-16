@@ -107,3 +107,23 @@ impl Tracker {
             .map(|peers| TrackerResponse { peers })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn it_correctly_converts_bytes_to_ip_addrs() {
+        let example: &[u8] = &[
+            0x49 as u8, 0x8C as u8, 0xCD as u8, 0x54 as u8, 0x23 as u8, 0x27 as u8,
+            0x49 as u8, 0x8C as u8, 0xCD as u8, 0x54 as u8, 0x23 as u8, 0x27 as u8,
+        ];
+        assert_eq!(
+            to_socket_addrs(bencode::BencodableByteString::from(example)).unwrap(),
+            vec![
+                "73.140.205.84:8999".parse::<std::net::SocketAddr>().unwrap(),
+                "73.140.205.84:8999".parse::<std::net::SocketAddr>().unwrap()
+            ]
+        );
+    }
+}
