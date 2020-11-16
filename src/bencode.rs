@@ -18,8 +18,8 @@ pub enum Bencodable {
 }
 
 impl BencodableByteString {
-    pub fn as_string(&self) -> &str {
-        std::str::from_utf8(&self.0).unwrap()
+    pub fn as_string(&self) -> Result<&str, std::str::Utf8Error> {
+        std::str::from_utf8(&self.0)
     }
 
     pub fn as_bytes(&self) -> &[u8] {

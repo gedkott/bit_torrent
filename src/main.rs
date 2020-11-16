@@ -9,9 +9,9 @@ mod tracker;
 use tracker::*;
 
 #[derive(Debug)]
-struct MetaInfoFile {
-    info: Info,
-    announce: String,
+struct MetaInfoFile<'a> {
+    info: Info<'a>,
+    announce: &'a str,
     announce_list: Option<Vec<Vec<String>>>,
     creation_date: Option<i32>,
     comment: Option<String>,
@@ -19,13 +19,13 @@ struct MetaInfoFile {
     encoding: Option<String>,
 }
 
-struct Info {
+struct Info<'a> {
     piece_length: i32,
-    pieces: Vec<u8>,
+    pieces: &'a [u8],
     private: Option<i32>,
 }
 
-impl std::fmt::Debug for Info {
+impl std::fmt::Debug for Info<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let pieces = std::str::from_utf8(&self.pieces).unwrap_or("BYTES");
         f.debug_struct("Info")
@@ -36,8 +36,8 @@ impl std::fmt::Debug for Info {
     }
 }
 
-impl From<&Bencodable> for MetaInfoFile {
-    fn from(b: &Bencodable) -> Self {
+impl<'a> From<&'a Bencodable> for MetaInfoFile<'a> {
+    fn from(b: &'a Bencodable) -> Self {
         let info = match &b {
             Bencodable::Dictionary(btm) => {
                 let info_key = &BencodableByteString::from("info");
@@ -51,7 +51,7 @@ impl From<&Bencodable> for MetaInfoFile {
 
                         let pieces_key = &BencodableByteString::from("pieces");
                         let pieces = match &btm[pieces_key] {
-                            Bencodable::ByteString(bs) => bs.as_bytes().to_owned(),
+                            Bencodable::ByteString(bs) => bs.as_bytes(),
                             _ => panic!("did not find pieces"),
                         };
 
@@ -80,7 +80,7 @@ impl From<&Bencodable> for MetaInfoFile {
 
         MetaInfoFile {
             info,
-            announce: announce.to_string(),
+            announce: announce.unwrap(),
             announce_list: None,
             creation_date: None,
             comment: None,
