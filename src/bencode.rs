@@ -5,7 +5,9 @@ pub struct BencodableByteString(Vec<u8>);
 
 impl std::fmt::Debug for BencodableByteString {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(std::str::from_utf8(self.0.as_slice()).unwrap_or(&format!("{:02X?}", self.as_bytes())))
+        f.write_str(
+            std::str::from_utf8(self.0.as_slice()).unwrap_or(&format!("{:02X?}", self.as_bytes())),
+        )
     }
 }
 
