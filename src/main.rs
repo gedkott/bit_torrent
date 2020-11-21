@@ -8,6 +8,9 @@ use bencode::*;
 mod tracker;
 use tracker::*;
 
+mod peer_tcp_client;
+use peer_tcp_client::*;
+
 #[derive(Debug)]
 struct MetaInfoFile<'a> {
     info: Info<'a>,
@@ -175,9 +178,13 @@ fn main() {
                 event: Event::Started,
             },
         )
-        .map(|resp| println!("Response {:#?}", resp))
+        .map(|resp| {
+            let peer_tcp_client = PeerTcpClient::connect(&resp.peers);
+        })
         .err()
     {
         println!("Error from tracking: {:?}", e);
     }
+
+    
 }

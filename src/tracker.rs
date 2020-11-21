@@ -9,7 +9,7 @@ pub enum Event {
 
 #[derive(Debug)]
 pub struct TrackerResponse {
-    peers: Vec<SocketAddr>,
+    pub peers: Vec<SocketAddr>,
 }
 
 #[derive(Debug)]
