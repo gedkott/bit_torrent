@@ -22,6 +22,42 @@ impl Stream {
         !self.am_choking && self.peer_interested
     }
 
+    fn choke(self) -> Self {
+        self
+    }
+
+    fn unchoke(self) -> Self {
+        self
+    }
+
+    fn interested(self) -> Self {
+        self
+    }
+
+    fn not_interested(self) -> Self {
+        self
+    }
+
+    fn have(self) -> Self {
+        self
+    }
+
+    fn bitfield(self) -> Self {
+        self
+    }
+
+    fn request(self) -> Self {
+        self
+    }
+
+    fn piece(self) -> Self {
+        self
+    }
+
+    fn cancel(self) -> Self {
+        self
+    }
+
     fn handshake(mut self, info_hash: &[u8]) -> Self {
         // do handshake
         println!("about to start writing handshake to wire");
