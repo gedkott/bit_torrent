@@ -76,16 +76,18 @@ fn main() {
 
         hasher.update(bencoded);
 
-        let bytes = hasher.digest().bytes();
+        hasher.digest().bytes()
+    };
 
-        percent_encoding::percent_encode(&bytes, percent_encoding::NON_ALPHANUMERIC).to_string()
+    let info_encoded = {
+        percent_encoding::percent_encode(&info_hash, percent_encoding::NON_ALPHANUMERIC).to_string()
     };
 
     if let Some(e) = Tracker::new()
         .track(
             &format!(
                 "{}?info_hash={}&peer_id={}",
-                &meta_info.announce, info_hash, peer_id
+                &meta_info.announce, info_encoded, peer_id
             ),
             TrackerRequestParameters {
                 port: 8999,
@@ -97,7 +99,13 @@ fn main() {
         )
         .map(|resp| {
             println!("got peers, starting bit torrent protocol with them...");
-            PeerTcpClient::connect(&resp.peers, &info_hash, peer_id)
+            let tcp_peers_w_peer_id: Vec<&tracker::Peer> = resp.peers.iter().filter_map(|p| {
+                match p {
+                    TrackerPeer::Peer(p) => Some(p),
+                    _ => None
+                }
+            }).collect();
+            PeerTcpClient::connect(&tcp_peers_w_peer_id, &info_hash)
         })
         .err()
     {

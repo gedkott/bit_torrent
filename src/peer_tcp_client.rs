@@ -1,10 +1,13 @@
 use std::io::{Read, Write};
-use std::net::{SocketAddr, TcpStream};
+use std::net::{TcpStream};
+
+use crate::TrackerPeer;
 
 const P_STR_LEN: u8 = 19;
 const P_STR: &str = "BitTorrent Protocol";
 
 struct Stream {
+    peer_id: Vec<u8>,
     tcp_stream: TcpStream,
     am_choking: bool,
     am_interested: bool,
@@ -21,7 +24,7 @@ impl Stream {
         !self.am_choking && self.peer_interested
     }
 
-    fn handshake(mut self, info_hash: &str, peer_id: &str) -> Self {
+    fn handshake(mut self, info_hash: &[u8]) -> Self {
         // do handshake
         println!("about to start writing handshake to wire");
         if let Err(e) = self
@@ -36,8 +39,8 @@ impl Stream {
                     .write_all(WireProtocolEncoding::String(P_STR).encode().as_ref())
             })
             .and_then(|_| self.tcp_stream.write_all(&[0, 0, 0, 0, 0, 0, 0, 0]))
-            .and_then(|_| self.tcp_stream.write_all(info_hash.as_bytes()))
-            .and_then(|_| self.tcp_stream.write_all(peer_id.as_bytes()))
+            .and_then(|_| self.tcp_stream.write_all(info_hash))
+            .and_then(|_| self.tcp_stream.write_all(&self.peer_id))
         {
             println!("something didn't work out... {:?}", e);
         } else {
@@ -51,6 +54,7 @@ impl Stream {
         println!("read bytes: {:?}", buf);
 
         Stream {
+            peer_id: self.peer_id,
             tcp_stream: self.tcp_stream,
             am_choking: self.am_choking,
             am_interested: self.am_interested,
@@ -87,16 +91,15 @@ pub struct PeerTcpClient {
 }
 
 impl<'a> PeerTcpClient {
-    pub fn connect(peer_socket_addrs: &'a [SocketAddr], info_hash: &str, peer_id: &str) -> Self {
-        let connections: Vec<Stream> = peer_socket_addrs
+    pub fn connect(peers: &[&crate::tracker::Peer], info_hash: &[u8]) -> Self {
+        let connections: Vec<Stream> = peers
             .iter()
-            .filter_map(|sa| {
-                println!("connecting to peer {} over tcp", sa);
-                if let Ok(tcp_stream) = TcpStream::connect_timeout(sa, std::time::Duration::from_secs(3)) {
+            .filter_map(|p| {
+                println!("connecting to peer {:?} over tcp", p);
+                if let Ok(tcp_stream) = TcpStream::connect_timeout(&p.socket_addr, std::time::Duration::from_secs(3)) {
                     println!("connected to peer over tcp");
-
-
                     Some(Stream {
+                        peer_id: p.id.clone(),
                         tcp_stream,
                         am_choking: true,
                         am_interested: false,
@@ -109,7 +112,9 @@ impl<'a> PeerTcpClient {
                     None
                 }
             })
-            .map(|s: Stream| s.handshake(info_hash, peer_id))
+            .map(|s: Stream| {
+                s.handshake(info_hash)
+            })
             .collect();
         PeerTcpClient { connections }
     }

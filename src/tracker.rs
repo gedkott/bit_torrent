@@ -8,8 +8,14 @@ pub enum Event {
 }
 
 #[derive(Debug)]
+pub struct Peer {
+    pub socket_addr: SocketAddr,
+    pub id: Vec<u8>
+}
+
+#[derive(Debug)]
 pub struct TrackerResponse {
-    pub peers: Vec<SocketAddr>,
+    pub peers: Vec<TrackerPeer>,
 }
 
 #[derive(Debug)]
@@ -63,8 +69,8 @@ struct BencodableList<'a> {
     list: &'a [bencode::Bencodable],
 }
 
-impl From<BencodableList<'_>> for Result<Vec<SocketAddr>, TrackerResponseError> {
-    fn from(b: BencodableList) -> Result<Vec<SocketAddr>, TrackerResponseError> {
+impl<'a> From<BencodableList<'a>> for Result<Vec<TrackerPeer>, TrackerResponseError> {
+    fn from(b: BencodableList) -> Result<Vec<TrackerPeer>, TrackerResponseError> {
         let mut rl = vec![];
         for b in b.list {
             match b {
@@ -98,13 +104,28 @@ impl From<BencodableList<'_>> for Result<Vec<SocketAddr>, TrackerResponseError> 
                         })
                         .unwrap();
 
-                    rl.push(SocketAddr::from((ip, *port as u16)));
+                    let peer_id = btm
+                        .get(&bencode::BencodableByteString::from("peer id"))
+                        .ok_or(TrackerResponseError::UnexpectedBencodable(b.clone()))
+                        .and_then(|id| match id {
+                            bencode::Bencodable::ByteString(bs) => Ok(bs.as_bytes().to_vec()),
+                            _ => Err(TrackerResponseError::UnexpectedBencodable(b.clone())),
+                        })
+                        .unwrap();
+
+                    rl.push( TrackerPeer::Peer( Peer { socket_addr: SocketAddr::from((ip, *port as u16)), id: peer_id } ));
                 }
                 _ => return Err(TrackerResponseError::UnexpectedBencodable(b.clone())),
             }
         }
         Ok(rl)
     }
+}
+
+#[derive(Debug)]
+pub enum TrackerPeer {
+    Peer(Peer),
+    SocketAddr(SocketAddr)
 }
 
 impl Tracker {
@@ -152,7 +173,7 @@ impl Tracker {
             })
             .and_then(|peers| match peers {
                 // A bytestring is one way to communicate a compact representation of peers
-                bencode::Bencodable::ByteString(bs) => to_socket_addrs(&bs),
+                bencode::Bencodable::ByteString(bs) => to_socket_addrs(&bs).map(|sas| sas.iter().map(|sa| TrackerPeer::SocketAddr(*sa) ).collect::<Vec<TrackerPeer>>() ),
 
                 // alternatively, get a bencodable that is more structured as a List of Dictionaries containing keys IP, peer id, and port with values
                 bencode::Bencodable::List(ld) => Result::from(BencodableList { list: &ld }),
