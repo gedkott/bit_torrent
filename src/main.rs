@@ -14,7 +14,7 @@ use tracker::*;
 mod peer_tcp_client;
 use peer_tcp_client::*;
 
-const TORRENT_FILE: &str = "6201484321_f1a88ca2cb_b_archive.torrent";
+const TORRENT_FILE: &str = "Charlie_Chaplin_Mabels_Strange_Predicament.avi.torrent";
 const MY_TORRENT_COPY: &str = "myfile.torrent";
 
 fn main() {
@@ -56,7 +56,7 @@ fn main() {
 
     let meta_info = MetaInfoFile::from(&bencodable);
 
-    let peer_id = { "-qB4030-i.52DyS4ir)l" };
+    let peer_id = "-qB4030-i.52DyS4ir)l";
 
     let info = match &bencodable {
         Bencodable::Dictionary(btm) => {
@@ -101,6 +101,6 @@ fn main() {
         })
         .err()
     {
-        println!("Error from tracking: {:?}", e);
+        println!("Error from tracking: {:#?}", e);
     }
 }

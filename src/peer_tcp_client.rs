@@ -24,26 +24,25 @@ impl Stream {
     fn handshake(mut self, info_hash: &str, peer_id: &str) -> Self {
         // do handshake
         println!("about to start writing handshake to wire");
-        self.tcp_stream
+        if let Err(e) = self
+            .tcp_stream
             .write_all(
                 WireProtocolEncoding::HandshakeInteger(P_STR_LEN)
                     .encode()
                     .as_ref(),
             )
-            .expect("failed to write p_str_len to tcp stream");
-        self.tcp_stream
-            .write_all(WireProtocolEncoding::String(P_STR).encode().as_ref())
-            .expect("failed to write p_str to tcp stream");
-        self.tcp_stream
-            .write_all(&[0, 0, 0, 0, 0, 0, 0, 0])
-            .expect("failed to write reserved bytes to tcp stream");
-        self.tcp_stream
-            .write_all(info_hash.as_bytes())
-            .expect("failed to write info hash to tcp stream");
-        self.tcp_stream
-            .write_all(peer_id.as_bytes())
-            .expect("failed to write peer_id to tcp stream");
-        println!("finished writing handshake to wire");
+            .and_then(|_| {
+                self.tcp_stream
+                    .write_all(WireProtocolEncoding::String(P_STR).encode().as_ref())
+            })
+            .and_then(|_| self.tcp_stream.write_all(&[0, 0, 0, 0, 0, 0, 0, 0]))
+            .and_then(|_| self.tcp_stream.write_all(info_hash.as_bytes()))
+            .and_then(|_| self.tcp_stream.write_all(peer_id.as_bytes()))
+        {
+            println!("something didn't work out... {:?}", e);
+        } else {
+            println!("finished writing handshake to wire")
+        }
 
         let mut buf = vec![];
         self.tcp_stream
@@ -91,18 +90,23 @@ impl<'a> PeerTcpClient {
     pub fn connect(peer_socket_addrs: &'a [SocketAddr], info_hash: &str, peer_id: &str) -> Self {
         let connections: Vec<Stream> = peer_socket_addrs
             .iter()
-            .map(|sa| {
+            .filter_map(|sa| {
                 println!("connecting to peer {} over tcp", sa);
-                let tcp_stream =
-                    TcpStream::connect(sa).expect("a tcp connection could not be started");
-                println!("connected to peer over tcp");
-                Stream {
-                    tcp_stream,
-                    am_choking: true,
-                    am_interested: false,
-                    peer_choking: true,
-                    peer_interested: false,
-                    // state: WireProtocolState::PreHandshake
+                if let Ok(tcp_stream) = TcpStream::connect_timeout(sa, std::time::Duration::from_secs(3)) {
+                    println!("connected to peer over tcp");
+
+
+                    Some(Stream {
+                        tcp_stream,
+                        am_choking: true,
+                        am_interested: false,
+                        peer_choking: true,
+                        peer_interested: false,
+                        // state: WireProtocolState::PreHandshake
+                    })
+                } else {
+                    println!("one of our peers didn't get along with us");
+                    None
                 }
             })
             .map(|s: Stream| s.handshake(info_hash, peer_id))

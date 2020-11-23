@@ -19,7 +19,9 @@ pub enum TrackerResponseError {
     HTTPError(reqwest::Error),
     UnexpectedBencodable(bencode::Bencodable),
     MisalignedPeers,
-    NoPeerByteString,
+    NoPeerByteString {
+        original_string: bencode::Bencodable,
+    },
 }
 
 pub struct TrackerRequestParameters {
@@ -35,7 +37,7 @@ pub struct Tracker {
 }
 
 fn to_socket_addrs(
-    b: bencode::BencodableByteString,
+    b: &bencode::BencodableByteString,
 ) -> Result<Vec<SocketAddr>, TrackerResponseError> {
     let peer_bytes: &[u8] = b.as_bytes();
     let total_bytes = peer_bytes.len();
@@ -54,6 +56,54 @@ fn to_socket_addrs(
         Ok(socket_addrs)
     } else {
         Err(TrackerResponseError::MisalignedPeers)
+    }
+}
+
+struct BencodableList<'a> {
+    list: &'a [bencode::Bencodable],
+}
+
+impl From<BencodableList<'_>> for Result<Vec<SocketAddr>, TrackerResponseError> {
+    fn from(b: BencodableList) -> Result<Vec<SocketAddr>, TrackerResponseError> {
+        let mut rl = vec![];
+        for b in b.list {
+            match b {
+                bencode::Bencodable::Dictionary(btm) => {
+                    let port = btm
+                        .get(&bencode::BencodableByteString::from("port"))
+                        .ok_or_else(|| TrackerResponseError::UnexpectedBencodable(b.clone()))
+                        .map(|port| {
+                            let port = match port {
+                                bencode::Bencodable::Integer(i) => i,
+                                _ => &-1,
+                            };
+                            port
+                        })
+                        .unwrap();
+
+                    let ip: std::net::Ipv4Addr = btm
+                        .get(&bencode::BencodableByteString::from("ip"))
+                        .ok_or(TrackerResponseError::UnexpectedBencodable(b.clone()))
+                        .and_then(|ip| match ip {
+                            bencode::Bencodable::ByteString(bs) => Ok(bs),
+                            _ => Err(TrackerResponseError::UnexpectedBencodable(b.clone())),
+                        })
+                        .and_then(|s| {
+                            s.as_string()
+                                .map_err(|_| TrackerResponseError::UnexpectedBencodable(b.clone()))
+                        })
+                        .and_then(|s| {
+                            s.parse::<std::net::Ipv4Addr>()
+                                .map_err(|_| TrackerResponseError::UnexpectedBencodable(b.clone()))
+                        })
+                        .unwrap();
+
+                    rl.push(SocketAddr::from((ip, *port as u16)));
+                }
+                _ => return Err(TrackerResponseError::UnexpectedBencodable(b.clone())),
+            }
+        }
+        Ok(rl)
     }
 }
 
@@ -101,8 +151,15 @@ impl Tracker {
                 _ => Err(TrackerResponseError::UnexpectedBencodable(bencodable)),
             })
             .and_then(|peers| match peers {
-                bencode::Bencodable::ByteString(bs) => to_socket_addrs(bs),
-                _ => Err(TrackerResponseError::NoPeerByteString),
+                // A bytestring is one way to communicate a compact representation of peers
+                bencode::Bencodable::ByteString(bs) => to_socket_addrs(&bs),
+
+                // alternatively, get a bencodable that is more structured as a List of Dictionaries containing keys IP, peer id, and port with values
+                bencode::Bencodable::List(ld) => Result::from(BencodableList { list: &ld }),
+
+                _ => Err(TrackerResponseError::NoPeerByteString {
+                    original_string: peers,
+                }),
             })
             .map(|peers| TrackerResponse { peers })
     }
@@ -119,7 +176,7 @@ mod tests {
             0x8C as u8, 0xCD as u8, 0x54 as u8, 0x23 as u8, 0x27 as u8,
         ];
         assert_eq!(
-            to_socket_addrs(bencode::BencodableByteString::from(example)).unwrap(),
+            to_socket_addrs(&bencode::BencodableByteString::from(example)).unwrap(),
             vec![
                 "73.140.205.84:8999"
                     .parse::<std::net::SocketAddr>()
