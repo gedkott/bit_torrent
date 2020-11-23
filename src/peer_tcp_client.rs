@@ -1,7 +1,5 @@
 use std::io::{Read, Write};
-use std::net::{TcpStream};
-
-use crate::TrackerPeer;
+use std::net::TcpStream;
 
 const P_STR_LEN: u8 = 19;
 const P_STR: &str = "BitTorrent Protocol";
@@ -96,7 +94,9 @@ impl<'a> PeerTcpClient {
             .iter()
             .filter_map(|p| {
                 println!("connecting to peer {:?} over tcp", p);
-                if let Ok(tcp_stream) = TcpStream::connect_timeout(&p.socket_addr, std::time::Duration::from_secs(3)) {
+                if let Ok(tcp_stream) =
+                    TcpStream::connect_timeout(&p.socket_addr, std::time::Duration::from_secs(3))
+                {
                     println!("connected to peer over tcp");
                     Some(Stream {
                         peer_id: p.id.clone(),
@@ -112,9 +112,7 @@ impl<'a> PeerTcpClient {
                     None
                 }
             })
-            .map(|s: Stream| {
-                s.handshake(info_hash)
-            })
+            .map(|s: Stream| s.handshake(info_hash))
             .collect();
         PeerTcpClient { connections }
     }

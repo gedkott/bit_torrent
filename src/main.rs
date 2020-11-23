@@ -99,12 +99,14 @@ fn main() {
         )
         .map(|resp| {
             println!("got peers, starting bit torrent protocol with them...");
-            let tcp_peers_w_peer_id: Vec<&tracker::Peer> = resp.peers.iter().filter_map(|p| {
-                match p {
+            let tcp_peers_w_peer_id: Vec<&tracker::Peer> = resp
+                .peers
+                .iter()
+                .filter_map(|p| match p {
                     TrackerPeer::Peer(p) => Some(p),
-                    _ => None
-                }
-            }).collect();
+                    _ => None,
+                })
+                .collect();
             PeerTcpClient::connect(&tcp_peers_w_peer_id, &info_hash)
         })
         .err()
