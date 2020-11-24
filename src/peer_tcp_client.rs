@@ -2,7 +2,7 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 
 const P_STR_LEN: u8 = 19;
-const P_STR: &str = "BitTorrent Protocol";
+const P_STR: &str = "BitTorrent protocol";
 
 struct Stream {
     peer_id: Vec<u8>,
@@ -63,14 +63,10 @@ impl Stream {
         println!("about to start writing handshake to wire");
         if let Err(e) = self
             .tcp_stream
-            .write_all(
-                WireProtocolEncoding::HandshakeInteger(P_STR_LEN)
-                    .encode()
-                    .as_ref(),
-            )
+            .write_all(&WireProtocolEncoding::HandshakeInteger(P_STR_LEN).encode())
             .and_then(|_| {
                 self.tcp_stream
-                    .write_all(WireProtocolEncoding::String(P_STR).encode().as_ref())
+                    .write_all(&WireProtocolEncoding::String(P_STR).encode())
             })
             .and_then(|_| self.tcp_stream.write_all(&[0, 0, 0, 0, 0, 0, 0, 0]))
             .and_then(|_| self.tcp_stream.write_all(info_hash))
@@ -81,11 +77,27 @@ impl Stream {
             println!("finished writing handshake to wire")
         }
 
-        let mut buf = vec![];
-        self.tcp_stream
-            .read_to_end(&mut buf)
-            .expect("could not read from tcp stream after attempting handshake");
-        println!("read bytes: {:?}", buf);
+        let mut buf = [0; 100];
+        let mut attempts = 25;
+
+        while attempts != 0 {
+            let n = match self.tcp_stream.read(&mut buf) {
+                Ok(n) => n,
+                Err(e) => {
+                    println!("got errr while reading: {}", e);
+                    return self;
+                }
+            };
+            // println!("got bytes potentially...");
+            if n > 0 {
+                println!("read bytes {:?}: {:?}", n, buf);
+            } else {
+                // 1. This reader has reached its "end of file" and will likely no longer be able to produce bytes. Note that this does not mean that the reader will always no longer be able to produce bytes.
+                // 2. The buffer specified was 0 bytes in length.
+                // println!("no bytes for 1 of 2 reasons");
+            }
+            attempts -= 1;
+        }
 
         Stream {
             peer_id: self.peer_id,
@@ -149,6 +161,7 @@ impl<'a> PeerTcpClient {
                 }
             })
             .map(|s: Stream| s.handshake(info_hash))
+            // .map(|s: Stream| s.)
             .collect();
         PeerTcpClient { connections }
     }
