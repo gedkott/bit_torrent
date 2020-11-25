@@ -97,16 +97,14 @@ fn main() {
                 event: Event::Started,
             },
         )
-        .map(|resp| {
+        .map(|resp: Box<dyn Iterator<Item = tracker::TrackerPeer>>| {
             println!("got peers, starting bit torrent protocol with them...");
-            let tcp_peers_w_peer_id: Vec<&tracker::Peer> = resp
-                .peers
-                .iter()
+            let tcp_peers_w_peer_id: Vec<tracker::Peer> = resp
                 .filter_map(|p| match p {
                     TrackerPeer::Peer(p) => Some(p),
                     _ => None,
                 })
-                .collect();
+                .collect::<Vec<tracker::Peer>>();
             PeerTcpClient::connect(&tcp_peers_w_peer_id, &info_hash)
         })
         .err()

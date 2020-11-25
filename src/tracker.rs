@@ -7,15 +7,26 @@ pub enum Event {
     Started,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Peer {
     pub socket_addr: SocketAddr,
     pub id: Vec<u8>,
 }
 
-#[derive(Debug)]
-pub struct TrackerResponse {
-    pub peers: Vec<TrackerPeer>,
+#[derive(Debug, PartialEq, Eq)]
+pub enum TrackerPeer {
+    Peer(Peer),
+    SocketAddr(SocketAddr),
+}
+
+pub trait TrackerResponse<'a> {
+    fn peers(self) -> &'a mut dyn Iterator<Item = TrackerPeer>;
+}
+
+impl<'a> TrackerResponse<'a> for &'a mut dyn Iterator<Item = TrackerPeer> {
+    fn peers(self) -> &'a mut dyn Iterator<Item = TrackerPeer> {
+        self
+    }
 }
 
 #[derive(Debug)]
@@ -42,8 +53,12 @@ pub struct Tracker {
     client: reqwest::blocking::Client,
 }
 
-impl From<&bencode::BencodableByteString> for Result<Vec<SocketAddr>, TrackerResponseError> {
-    fn from(b: &bencode::BencodableByteString) -> Result<Vec<SocketAddr>, TrackerResponseError> {
+impl<'a> From<&bencode::BencodableByteString>
+    for Result<Box<dyn Iterator<Item = TrackerPeer>>, TrackerResponseError>
+{
+    fn from(
+        b: &bencode::BencodableByteString,
+    ) -> Result<Box<dyn Iterator<Item = TrackerPeer>>, TrackerResponseError> {
         let peer_bytes: &[u8] = b.as_bytes();
         let total_bytes = peer_bytes.len();
         if total_bytes % 6 == 0 {
@@ -58,7 +73,11 @@ impl From<&bencode::BencodableByteString> for Result<Vec<SocketAddr>, TrackerRes
                 i += 6;
             }
 
-            Ok(socket_addrs)
+            Ok(Box::new(
+                socket_addrs
+                    .into_iter()
+                    .map(TrackerPeer::SocketAddr)),
+            )
         } else {
             Err(TrackerResponseError::MisalignedPeers)
         }
@@ -69,12 +88,17 @@ struct BencodableList<'a> {
     list: &'a [bencode::Bencodable],
 }
 
-impl<'a> From<BencodableList<'a>> for Result<Vec<TrackerPeer>, TrackerResponseError> {
-    fn from(b: BencodableList) -> Result<Vec<TrackerPeer>, TrackerResponseError> {
+impl<'a> From<BencodableList<'a>>
+    for Result<Box<dyn Iterator<Item = TrackerPeer>>, TrackerResponseError>
+{
+    fn from(
+        b: BencodableList,
+    ) -> Result<Box<dyn Iterator<Item = TrackerPeer>>, TrackerResponseError> {
         let mut rl = vec![TrackerPeer::Peer(Peer {
             socket_addr: SocketAddr::from(([192, 131, 44, 135], 20555)),
             id: b"-qB4170-TfLt*agWEPGs".to_vec(),
-        })];
+        })]
+        .into_iter();
 
         // for b in b.list {
         //     match b {
@@ -122,14 +146,8 @@ impl<'a> From<BencodableList<'a>> for Result<Vec<TrackerPeer>, TrackerResponseEr
         //         _ => return Err(TrackerResponseError::UnexpectedBencodable(b.clone())),
         //     }
         // }
-        Ok(rl)
+        Ok(Box::new(rl))
     }
-}
-
-#[derive(Debug)]
-pub enum TrackerPeer {
-    Peer(Peer),
-    SocketAddr(SocketAddr),
 }
 
 impl Tracker {
@@ -143,7 +161,7 @@ impl Tracker {
         &self,
         announce_url: &str,
         trp: TrackerRequestParameters,
-    ) -> Result<TrackerResponse, TrackerResponseError> {
+    ) -> Result<Box<dyn Iterator<Item = TrackerPeer>>, TrackerResponseError> {
         let request = self
             .client
             .get(announce_url)
@@ -177,11 +195,7 @@ impl Tracker {
             })
             .and_then(|peers| match peers {
                 // A bytestring is one way to communicate a compact representation of peers
-                bencode::Bencodable::ByteString(bs) => Result::from(&bs).map(|sas| {
-                    sas.iter()
-                        .map(|sa| TrackerPeer::SocketAddr(*sa))
-                        .collect::<Vec<TrackerPeer>>()
-                }),
+                bencode::Bencodable::ByteString(bs) => Result::from(&bs),
 
                 // alternatively, get a bencodable that is more structured as a List of Dictionaries containing keys IP, peer id, and port with values
                 bencode::Bencodable::List(ld) => Result::from(BencodableList { list: &ld }),
@@ -189,7 +203,6 @@ impl Tracker {
                     original_string: peers,
                 }),
             })
-            .map(|peers| TrackerResponse { peers })
     }
 }
 
@@ -203,16 +216,23 @@ mod tests {
             0x49 as u8, 0x8C as u8, 0xCD as u8, 0x54 as u8, 0x23 as u8, 0x27 as u8, 0x49 as u8,
             0x8C as u8, 0xCD as u8, 0x54 as u8, 0x23 as u8, 0x27 as u8,
         ];
-        assert_eq!(
-            Result::from(&bencode::BencodableByteString::from(example)).unwrap(),
-            vec![
+
+        let actual = Result::from(&bencode::BencodableByteString::from(example))
+            .unwrap()
+            .collect::<Vec<TrackerPeer>>();
+        let expected = vec![
+            TrackerPeer::SocketAddr(
                 "73.140.205.84:8999"
                     .parse::<std::net::SocketAddr>()
                     .unwrap(),
+            ),
+            TrackerPeer::SocketAddr(
                 "73.140.205.84:8999"
                     .parse::<std::net::SocketAddr>()
-                    .unwrap()
-            ]
-        );
+                    .unwrap(),
+            ),
+        ];
+
+        assert_eq!(actual, expected);
     }
 }
