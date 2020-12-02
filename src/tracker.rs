@@ -74,10 +74,8 @@ impl<'a> From<&bencode::BencodableByteString>
             }
 
             Ok(Box::new(
-                socket_addrs
-                    .into_iter()
-                    .map(TrackerPeer::SocketAddr)),
-            )
+                socket_addrs.into_iter().map(TrackerPeer::SocketAddr),
+            ))
         } else {
             Err(TrackerResponseError::MisalignedPeers)
         }
@@ -85,16 +83,16 @@ impl<'a> From<&bencode::BencodableByteString>
 }
 
 struct BencodableList<'a> {
-    list: &'a [bencode::Bencodable],
+    _list: &'a [bencode::Bencodable],
 }
 
 impl<'a> From<BencodableList<'a>>
     for Result<Box<dyn Iterator<Item = TrackerPeer>>, TrackerResponseError>
 {
     fn from(
-        b: BencodableList,
+        _b: BencodableList,
     ) -> Result<Box<dyn Iterator<Item = TrackerPeer>>, TrackerResponseError> {
-        let mut rl = vec![TrackerPeer::Peer(Peer {
+        let rl = vec![TrackerPeer::Peer(Peer {
             socket_addr: SocketAddr::from(([192, 131, 44, 135], 20555)),
             id: b"-qB4170-TfLt*agWEPGs".to_vec(),
         })]
@@ -198,7 +196,7 @@ impl Tracker {
                 bencode::Bencodable::ByteString(bs) => Result::from(&bs),
 
                 // alternatively, get a bencodable that is more structured as a List of Dictionaries containing keys IP, peer id, and port with values
-                bencode::Bencodable::List(ld) => Result::from(BencodableList { list: &ld }),
+                bencode::Bencodable::List(ld) => Result::from(BencodableList { _list: &ld }),
                 _ => Err(TrackerResponseError::NoPeerByteString {
                     original_string: peers,
                 }),
