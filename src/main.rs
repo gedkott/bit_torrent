@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::prelude::*;
+use std::{thread, time};
 
 mod bencode;
 use bencode::*;
@@ -10,6 +11,8 @@ use bit_torrent_data::*;
 
 mod tracker;
 use tracker::*;
+
+mod messages;
 
 mod peer_tcp_client;
 use peer_tcp_client::*;
@@ -106,6 +109,27 @@ fn main() {
                 })
                 .collect::<Vec<tracker::Peer>>();
             PeerTcpClient::connect(&tcp_peers_w_peer_id, &info_hash)
+        })
+        .map(|ptc| {
+            let ih = ptc.info_hash.clone();
+            let c = ptc.listen();
+            let message_receiver = c.0;
+            let mut ss: Vec<Stream> = c.1.into_iter().filter_map(|(t, s)| {
+                Some(s)
+            }).collect();
+            let f = |ss: &mut Vec<Stream>| {
+                let ten_millis = time::Duration::from_millis(1000);
+                thread::sleep(ten_millis);
+                
+                for s in ss {
+                    s.handshake(&ih);
+                }
+            };
+            loop {
+                let message = message_receiver.recv();
+                println!("message: {:?}", message);
+                f(&mut ss);
+            }
         })
         .err()
     {

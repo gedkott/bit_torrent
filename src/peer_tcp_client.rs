@@ -1,72 +1,11 @@
-use std::convert::TryInto;
 use std::io::{Read, Write};
 use std::net::TcpStream;
+use std::sync::mpsc::{channel, Receiver};
+use std::thread;
 
-const P_STR_LEN: u8 = 19;
-const P_STR: &str = "BitTorrent protocol";
-const RESERVED_BYTES: [u8; 8] = [0; 8];
+use crate::messages::*;
 
-#[derive(Debug)]
-struct Handshake<'a> {
-    info_hash: &'a [u8],
-    peer_id: &'a [u8],
-}
-
-impl<'a> Handshake<'a> {
-    fn serialize(&self) -> Vec<u8> {
-        [
-            WireProtocolEncoding::HandshakeInteger(P_STR_LEN).encode(),
-            WireProtocolEncoding::String(P_STR).encode(),
-            RESERVED_BYTES.to_vec(),
-            self.info_hash.to_vec(),
-            self.peer_id.to_vec(),
-        ]
-        .iter()
-        .flatten()
-        .cloned()
-        .collect()
-    }
-}
-
-#[derive(Debug)]
-enum HandshakeParseError {
-    PStrLen,
-    PStr,
-    ReservedBytes,
-    InfoHash,
-    PeerId,
-}
-
-fn parse_handshake(handshake_binary: &[u8]) -> Result<Handshake<'_>, HandshakeParseError> {
-    let p_str_len: usize = (*handshake_binary
-        .get(0)
-        .ok_or(HandshakeParseError::PStrLen)?)
-    .try_into()
-    .map_err(|_| HandshakeParseError::PStrLen)?;
-
-    let len: usize = 1 + p_str_len;
-
-    let _p_str = handshake_binary
-        .get(1..len)
-        .ok_or(HandshakeParseError::PStr)
-        .and_then(|s| std::str::from_utf8(s).map_err(|_| HandshakeParseError::PStr))?;
-
-    let _reserved_bytes = handshake_binary
-        .get(len..len + 8)
-        .ok_or(HandshakeParseError::ReservedBytes)?;
-
-    let info_hash = handshake_binary
-        .get(len + 8..len + 8 + 20)
-        .ok_or(HandshakeParseError::InfoHash)?;
-
-    let peer_id = handshake_binary
-        .get(len + 8 + 20..len + 8 + 20 + 20)
-        .ok_or(HandshakeParseError::PeerId)?;
-
-    Ok(Handshake { info_hash, peer_id })
-}
-
-struct Stream {
+pub struct Stream {
     peer_id: Vec<u8>,
     tcp_stream: TcpStream,
     am_choking: bool,
@@ -122,10 +61,7 @@ impl Stream {
 }
 
 impl Stream {
-    fn handshake(mut self, info_hash: &[u8]) -> Self {
-        // do handshake
-        println!("about to start writing handshake to wire");
-
+    pub fn handshake(&mut self, info_hash: &[u8]) -> () {
         let handshake = Handshake {
             info_hash,
             peer_id: &self.peer_id,
@@ -133,65 +69,37 @@ impl Stream {
 
         let bytes: Vec<u8> = handshake.serialize();
 
+        println!("message {:?}", handshake);
         if let Err(e) = self.tcp_stream.write_all(&bytes) {
-            println!("something didn't work out... {:?}", e);
         } else {
-            println!("finished writing handshake to wire {:?}", handshake)
         }
 
-        let mut buf = [0; 512];
+        let mut buf = [0; 68];
 
         let n = match self.tcp_stream.read(&mut buf) {
             Ok(n) => {
-                println!("read {} bytes", n);
                 n
             }
             Err(e) => {
-                println!("got errr while reading: {}", e);
-                return self;
+                return ();
             }
         };
 
-        if n > 0 {
-            let hand_shake = parse_handshake(&buf);
-            println!("handshake {:?}", hand_shake);
-            println!("peer id: {}", std::str::from_utf8(hand_shake.unwrap().peer_id).unwrap());
-        } else {
-            println!("no bytes for 1 of 2 reasons");
-        }
+        // if n > 0 {
+        //     let hand_shake = Handshake::new(&buf);
+        // } else {
+        // }
 
-        Stream {
-            peer_id: self.peer_id,
-            tcp_stream: self.tcp_stream,
-            am_choking: self.am_choking,
-            am_interested: self.am_interested,
-            peer_choking: self.peer_choking,
-            peer_interested: self.peer_interested,
-        }
-    }
-}
-
-enum WireProtocolEncoding<'a> {
-    HandshakeInteger(u8),
-    // PostHandshakeInteger(u32),
-    String(&'a str),
-}
-
-impl WireProtocolEncoding<'_> {
-    pub fn encode(&self) -> Vec<u8> {
-        match self {
-            WireProtocolEncoding::HandshakeInteger(i) => u8::to_be_bytes(*i).to_vec(),
-            // WireProtocolEncoding::PostHandshakeInteger(i) => u32::to_be_bytes(*i).to_vec(),
-            WireProtocolEncoding::String(s) => s.as_bytes().to_vec(),
-        }
+        ()
     }
 }
 
 pub struct PeerTcpClient {
-    _connections: Vec<Stream>,
+    pub connections: Vec<Stream>,
+    pub info_hash: Vec<u8>
 }
 
-impl<'a> PeerTcpClient {
+impl PeerTcpClient {
     pub fn connect(peers: &[crate::tracker::Peer], info_hash: &[u8]) -> Self {
         let connections: Vec<Stream> = peers
             .iter()
@@ -214,10 +122,45 @@ impl<'a> PeerTcpClient {
                     None
                 }
             })
-            .map(|s: Stream| s.handshake(info_hash))
+            .map(|mut s: Stream| {
+                s.handshake(info_hash); 
+                s 
+            } )
             .collect();
         PeerTcpClient {
-            _connections: connections,
+            connections: connections,
+            info_hash: info_hash.to_vec()
         }
+    }
+
+    pub fn listen(self) -> 
+        (Receiver<Result<Message, MessageParseError>>, Vec<(std::thread::JoinHandle<()>, Stream)>) {
+        let (sender, receiver) = channel();
+        // let (outbound_sender, outbound_receiver) = channel();
+        let threads = self.connections
+            .into_iter()
+            .filter_map(|c| {
+                let mut s = c.tcp_stream.try_clone().ok()?; // this ignores streams that failed to clone
+                let tx = sender.clone();
+                let thread_handle = thread::spawn(move || {
+                    let mut buf = [0u8; 256].to_vec();
+                    while let Ok(n) = s.read(&mut buf) {
+                        if n > 0 {
+                            let buf_iter = buf.clone().into_iter();
+                            let m = Message::new(Box::new(buf_iter));
+                            tx.send(m).unwrap();
+                        } else {
+
+                        }
+                    };
+                });
+                Some((thread_handle, c))
+            })
+            .collect();
+        (receiver, threads)
+    }
+
+    pub fn write(self) {
+
     }
 }
