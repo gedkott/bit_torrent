@@ -15,6 +15,7 @@ pub struct Info<'a> {
     piece_length: i32,
     pieces: &'a [u8],
     private: Option<i32>,
+    name: &'a str
 }
 
 impl std::fmt::Debug for Info<'_> {
@@ -24,6 +25,7 @@ impl std::fmt::Debug for Info<'_> {
             .field("pieces_length", &self.piece_length)
             .field("private", &self.private)
             .field("pieces", &pieces)
+            .field("name", &self.name)
             .finish()
     }
 }
@@ -47,10 +49,17 @@ impl<'a> From<&'a Bencodable> for MetaInfoFile<'a> {
                             _ => panic!("did not find pieces"),
                         };
 
+                        let name_key = &BencodableByteString::from("name");
+                        let name = match &btm[name_key] {
+                            Bencodable::ByteString(bs) => bs.as_string().unwrap(),
+                            _ => panic!("did not find name"),
+                        };
+
                         Info {
                             piece_length,
                             pieces,
                             private: None,
+                            name,
                         }
                     }
                     _ => panic!("did not find info"),

@@ -59,6 +59,8 @@ fn main() {
 
     let meta_info = MetaInfoFile::from(&bencodable);
 
+    println!("{:?}", meta_info);
+
     let peer_id = "-qB4030-i.52DyS4ir)l";
 
     let info = match &bencodable {
@@ -113,22 +115,18 @@ fn main() {
         .map(|ptc| {
             let ih = ptc.info_hash.clone();
             let c = ptc.listen();
-            let message_receiver = c.0;
-            let mut ss: Vec<Stream> = c.1.into_iter().filter_map(|(t, s)| {
-                Some(s)
-            }).collect();
-            let f = |ss: &mut Vec<Stream>| {
-                let ten_millis = time::Duration::from_millis(1000);
-                thread::sleep(ten_millis);
-                
-                for s in ss {
-                    s.handshake(&ih);
-                }
-            };
+            let mut ss: Vec<Stream> = c.threads.into_iter().map(|(_, s)| s).collect();
+            for s in &mut ss {
+                println!("handshaking with {:?}", s);
+                s.handshake(&ih);
+            }
+            let message_receiver = c.receiver;
             loop {
+                println!("waiting for message...");
                 let message = message_receiver.recv();
                 println!("message: {:?}", message);
-                f(&mut ss);
+                let ten_millis = time::Duration::from_millis(1000);
+                thread::sleep(ten_millis);
             }
         })
         .err()
