@@ -83,68 +83,64 @@ impl<'a> From<&bencode::BencodableByteString>
 }
 
 struct BencodableList<'a> {
-    _list: &'a [bencode::Bencodable],
+    list: &'a [bencode::Bencodable],
 }
 
 impl<'a> From<BencodableList<'a>>
     for Result<Box<dyn Iterator<Item = TrackerPeer>>, TrackerResponseError>
 {
     fn from(
-        _b: BencodableList,
+        b: BencodableList,
     ) -> Result<Box<dyn Iterator<Item = TrackerPeer>>, TrackerResponseError> {
-        let rl = vec![TrackerPeer::Peer(Peer {
-            socket_addr: SocketAddr::from(([192, 131, 44, 135], 20555)),
-            id: b"-qB4170-TfLt*agWEPGs".to_vec(),
-        })]
-        .into_iter();
+        let mut rl = vec![];
 
-        // for b in b.list {
-        //     match b {
-        //         bencode::Bencodable::Dictionary(btm) => {
-        //             let port = btm
-        //                 .get(&bencode::BencodableByteString::from("port"))
-        //                 .ok_or_else(|| TrackerResponseError::UnexpectedBencodable(b.clone()))
-        //                 .and_then(|port| match port {
-        //                     bencode::Bencodable::Integer(i) => Ok(i),
-        //                     _ => Err(TrackerResponseError::UnexpectedBencodable(b.clone())),
-        //                 })
-        //                 .unwrap();
+        for b in b.list {
+            match b {
+                bencode::Bencodable::Dictionary(btm) => {
+                    let port = btm
+                        .get(&bencode::BencodableByteString::from("port"))
+                        .ok_or_else(|| TrackerResponseError::UnexpectedBencodable(b.clone()))
+                        .and_then(|port| match port {
+                            bencode::Bencodable::Integer(i) => Ok(i),
+                            _ => Err(TrackerResponseError::UnexpectedBencodable(b.clone())),
+                        })
+                        .unwrap();
 
-        //             let ip: std::net::Ipv4Addr = btm
-        //                 .get(&bencode::BencodableByteString::from("ip"))
-        //                 .ok_or_else(|| TrackerResponseError::UnexpectedBencodable(b.clone()))
-        //                 .and_then(|ip| match ip {
-        //                     bencode::Bencodable::ByteString(bs) => Ok(bs),
-        //                     _ => Err(TrackerResponseError::UnexpectedBencodable(b.clone())),
-        //                 })
-        //                 .and_then(|s| {
-        //                     s.as_string()
-        //                         .map_err(|_| TrackerResponseError::UnexpectedBencodable(b.clone()))
-        //                 })
-        //                 .and_then(|s| {
-        //                     s.parse::<std::net::Ipv4Addr>()
-        //                         .map_err(|_| TrackerResponseError::UnexpectedBencodable(b.clone()))
-        //                 })
-        //                 .unwrap();
+                    let ip: std::net::Ipv4Addr = btm
+                        .get(&bencode::BencodableByteString::from("ip"))
+                        .ok_or_else(|| TrackerResponseError::UnexpectedBencodable(b.clone()))
+                        .and_then(|ip| match ip {
+                            bencode::Bencodable::ByteString(bs) => Ok(bs),
+                            _ => Err(TrackerResponseError::UnexpectedBencodable(b.clone())),
+                        })
+                        .and_then(|s| {
+                            s.as_string()
+                                .map_err(|_| TrackerResponseError::UnexpectedBencodable(b.clone()))
+                        })
+                        .and_then(|s| {
+                            s.parse::<std::net::Ipv4Addr>()
+                                .map_err(|_| TrackerResponseError::UnexpectedBencodable(b.clone()))
+                        })
+                        .unwrap();
 
-        //             let peer_id = btm
-        //                 .get(&bencode::BencodableByteString::from("peer id"))
-        //                 .ok_or_else(|| TrackerResponseError::UnexpectedBencodable(b.clone()))
-        //                 .and_then(|id| match id {
-        //                     bencode::Bencodable::ByteString(bs) => Ok(bs.as_bytes().to_vec()),
-        //                     _ => Err(TrackerResponseError::UnexpectedBencodable(b.clone())),
-        //                 })
-        //                 .unwrap();
+                    let peer_id = btm
+                        .get(&bencode::BencodableByteString::from("peer id"))
+                        .ok_or_else(|| TrackerResponseError::UnexpectedBencodable(b.clone()))
+                        .and_then(|id| match id {
+                            bencode::Bencodable::ByteString(bs) => Ok(bs.as_bytes().to_vec()),
+                            _ => Err(TrackerResponseError::UnexpectedBencodable(b.clone())),
+                        })
+                        .unwrap();
 
-        //             rl.push(TrackerPeer::Peer(Peer {
-        //                 socket_addr: SocketAddr::from((ip, *port as u16)),
-        //                 id: peer_id,
-        //             }));
-        //         }
-        //         _ => return Err(TrackerResponseError::UnexpectedBencodable(b.clone())),
-        //     }
-        // }
-        Ok(Box::new(rl))
+                    rl.push(TrackerPeer::Peer(Peer {
+                        socket_addr: SocketAddr::from((ip, *port as u16)),
+                        id: peer_id,
+                    }));
+                }
+                _ => return Err(TrackerResponseError::UnexpectedBencodable(b.clone())),
+            }
+        }
+        Ok(Box::new(rl.into_iter()))
     }
 }
 
@@ -196,7 +192,7 @@ impl Tracker {
                 bencode::Bencodable::ByteString(bs) => Result::from(&bs),
 
                 // alternatively, get a bencodable that is more structured as a List of Dictionaries containing keys IP, peer id, and port with values
-                bencode::Bencodable::List(ld) => Result::from(BencodableList { _list: &ld }),
+                bencode::Bencodable::List(ld) => Result::from(BencodableList { list: &ld }),
                 _ => Err(TrackerResponseError::NoPeerByteString {
                     original_string: peers,
                 }),

@@ -10,9 +10,9 @@ fn read_be_u32(input: &mut &[u8]) -> Result<u32, std::array::TryFromSliceError> 
     int_bytes.try_into().map(u32::from_be_bytes)
 }
 
-// fn attach_bytes(bytes: &[std::slice::Iter<'_, u8>]) -> Vec<u8> {
-//     bytes.iter().cloned().flatten().cloned().collect()
-// }
+fn attach_bytes(bytes: &[std::slice::Iter<'_, u8>]) -> Vec<u8> {
+    bytes.iter().cloned().flatten().cloned().collect()
+}
 
 enum WireProtocolEncoding<'a> {
     HandshakeInteger(u8),
@@ -46,6 +46,13 @@ pub enum HandshakeParseError {
 }
 
 #[derive(Debug)]
+pub struct RequestMessage {
+    pub index: u32,
+    pub begin: u32,
+    pub length: u32,
+}
+
+#[derive(Debug)]
 pub enum Message {
     // KeepAlive,
     Choke,
@@ -54,43 +61,54 @@ pub enum Message {
     NotInterested,
     Have { index: u32 },
     BitField(Vec<u8>),
+    // Request(RequestMessage),
+    // Piece,
+    // Cancel,
 }
 
 #[derive(Debug)]
 pub enum MessageParseError {
     PrefixLen,
-    Id,
+    Id(u8),
+    IdMissing,
     Have,
-    // BitField,
+    Unimplemented(&'static str), // BitField,
 }
 
 impl Message {
-    // pub fn serialize(&self) -> Vec<u8> {
-    //     match self {
-    //         Message::KeepAlive => 0u32.to_be_bytes().to_vec(),
-    //         Message::Choke => attach_bytes(&[0u32.to_be_bytes().iter(), [1u8].iter()]),
-    //         Message::UnChoke => attach_bytes(&[1u32.to_be_bytes().iter(), [1u8].iter()]),
-    //         Message::Interested => attach_bytes(&[2u32.to_be_bytes().iter(), [1u8].iter()]),
-    //         Message::NotInterested => attach_bytes(&[3u32.to_be_bytes().iter(), [1u8].iter()]),
-    //         Message::Have { index } => attach_bytes(&[
-    //             5u32.to_be_bytes().iter(),
-    //             [4u8].iter(),
-    //             index.to_be_bytes().iter(),
-    //         ]),
-    //         Message::BitField(bf) => {
-    //             let l = bf.len();
-    //             let prefix_len = 1u32 + l as u32;
-    //             attach_bytes(&[prefix_len.to_be_bytes().iter(), [5u8].iter(), bf.iter()])
-    //         }
-    //     }
-    // }
+    pub fn serialize(&self) -> Vec<u8> {
+        match self {
+            Message::Choke => attach_bytes(&[0u32.to_be_bytes().iter(), [1u8].iter()]),
+            Message::UnChoke => attach_bytes(&[1u32.to_be_bytes().iter(), [1u8].iter()]),
+            Message::Interested => attach_bytes(&[2u32.to_be_bytes().iter(), [1u8].iter()]),
+            Message::NotInterested => attach_bytes(&[3u32.to_be_bytes().iter(), [1u8].iter()]),
+            Message::Have { index } => attach_bytes(&[
+                5u32.to_be_bytes().iter(),
+                [4u8].iter(),
+                index.to_be_bytes().iter(),
+            ]),
+            // Message::Request(mr) => attach_bytes(&[
+            //     6u32.to_be_bytes().iter(),
+            //     mr.index.to_be_bytes().iter(),
+            //     mr.begin.to_be_bytes().iter(),
+            //     mr.length.to_be_bytes().iter(),
+            // ]),
+            Message::BitField(bf) => {
+                let l = bf.len();
+                let prefix_len = 1u32 + l as u32;
+                attach_bytes(&[prefix_len.to_be_bytes().iter(), [5u8].iter(), bf.iter()])
+            }
+            // Message::Piece => vec![b'1'],
+            // Message::Cancel => vec![b'1'],
+        }
+    }
 
     pub fn new(mut bytes: Box<dyn Iterator<Item = u8>>) -> Result<Self, MessageParseError> {
         let b: Vec<u8> = bytes.by_ref().take(4).collect();
         let prefix_len =
             read_be_u32(&mut b.as_slice()).map_err(|_| MessageParseError::PrefixLen)?;
 
-        let id = bytes.next().ok_or(MessageParseError::Id)?;
+        let id = bytes.next().ok_or(MessageParseError::IdMissing)?;
 
         match id {
             0 => Ok(Message::Choke),
@@ -110,10 +128,12 @@ impl Message {
                 ))
             }
             // request
-            // 6 => {
-
-            // }
-            _ => Err(MessageParseError::Id),
+            6 => Err(MessageParseError::Unimplemented("6 - request")),
+            // piece
+            7 => Err(MessageParseError::Unimplemented("7 - request")),
+            // cancel
+            8 => Err(MessageParseError::Unimplemented("8 - request")),
+            _ => Err(MessageParseError::Id(id)),
         }
     }
 }

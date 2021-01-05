@@ -9,10 +9,10 @@ use crate::messages::*;
 pub struct Stream {
     peer_id: Vec<u8>,
     tcp_stream: TcpStream,
-    // am_choking: bool,
-    // am_interested: bool,
-    // peer_choking: bool,
-    // peer_interested: bool,
+    am_choking: bool,
+    am_interested: bool,
+    peer_choking: bool,
+    peer_interested: bool,
 }
 
 impl Stream {
@@ -23,22 +23,6 @@ impl Stream {
     // fn _should_upload_block(&self) -> bool {
     //     !self.am_choking && self.peer_interested
     // }
-
-    fn _choke(self) -> Self {
-        self
-    }
-
-    fn _unchoke(self) -> Self {
-        self
-    }
-
-    fn _interested(self) -> Self {
-        self
-    }
-
-    fn _not_interested(self) -> Self {
-        self
-    }
 
     fn _have(self) -> Self {
         self
@@ -76,7 +60,6 @@ impl Stream {
         }
 
         // handshake includes reading the return handshake
-        // TODO(): parse handshakes
         let mut buf: [u8; 68] = [0; 68];
 
         let _n = match self.tcp_stream.read(&mut buf) {
@@ -90,6 +73,26 @@ impl Stream {
             }
         };
     }
+
+    pub fn interested(&mut self) {
+        let bytes: Vec<u8> = Message::Interested.serialize();
+
+        println!("identifying as intereested in peer: {:?}", self);
+
+        if let Err(_e) = self.tcp_stream.write_all(&bytes) {
+        } else {
+        }
+    }
+
+    pub fn unchoke_self(&mut self) {
+        self.am_choking = false;
+        println!("stream being unchoked by peer: {:?}", self);
+    }
+
+    pub fn choke_self(&mut self) {
+        self.am_choking = true;
+        println!("stream being choked by peer: {:?}", self);
+    }
 }
 
 pub struct PeerTcpClient {
@@ -97,9 +100,12 @@ pub struct PeerTcpClient {
     pub info_hash: Vec<u8>,
 }
 
+use std::sync::{Arc, Mutex};
+
+type R = Receiver<(Arc<Mutex<Stream>>, Result<Message, MessageParseError>)>;
 pub struct Readers {
-    pub receiver: Receiver<Result<Message, MessageParseError>>,
-    pub threads: Vec<(std::thread::JoinHandle<()>, Stream)>,
+    pub receiver: R,
+    pub threads: Vec<(std::thread::JoinHandle<()>, Arc<Mutex<Stream>>)>,
 }
 
 impl PeerTcpClient {
@@ -115,20 +121,16 @@ impl PeerTcpClient {
                     Some(Stream {
                         peer_id: p.id.clone(),
                         tcp_stream,
-                        // am_choking: true,
-                        // am_interested: false,
-                        // peer_choking: true,
-                        // peer_interested: false,
+                        am_choking: true,
+                        am_interested: false,
+                        peer_choking: true,
+                        peer_interested: false,
                     })
                 } else {
                     println!("one of our peers didn't get along with us");
                     None
                 }
             })
-            // .map(|mut s: Stream| {
-            //     s.handshake(info_hash);
-            //     s
-            // })
             .collect();
         PeerTcpClient {
             connections,
@@ -141,21 +143,24 @@ impl PeerTcpClient {
         let threads = self
             .connections
             .into_iter()
-            .filter_map(|c| {
-                let mut s = c.tcp_stream.try_clone().ok()?; // this ignores streams that failed to clone
+            .map(|c| {
+                let s_c = Arc::new(Mutex::new(c));
+                let r_s_c = Arc::clone(&s_c);
                 let tx = sender.clone();
+
                 let thread_handle = thread::spawn(move || {
+                    let mut s = s_c.lock().unwrap().tcp_stream.try_clone().ok().unwrap(); // this ignores streams that failed to clone
                     let mut buf = [0u8; 256].to_vec();
                     while let Ok(n) = s.read(&mut buf) {
                         if n > 0 {
                             let buf_iter = buf.clone().into_iter();
                             let m = Message::new(Box::new(buf_iter));
-                            tx.send(m).unwrap();
+                            tx.send((Arc::clone(&s_c), m)).unwrap();
                         } else {
                         }
                     }
                 });
-                Some((thread_handle, c))
+                (thread_handle, r_s_c)
             })
             .collect();
         Readers { receiver, threads }

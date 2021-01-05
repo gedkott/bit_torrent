@@ -1,7 +1,11 @@
+use rand::Rng;
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::prelude::*;
+use std::sync::{Arc, Mutex};
 use std::{thread, time};
+
+use sha1::Sha1;
 
 mod bencode;
 use bencode::*;
@@ -13,6 +17,7 @@ mod tracker;
 use tracker::*;
 
 mod messages;
+use messages::*;
 
 mod peer_tcp_client;
 use peer_tcp_client::*;
@@ -61,7 +66,7 @@ fn main() {
 
     println!("{:?}", meta_info);
 
-    let peer_id = "-qB4030-i.52DyS4ir)l";
+    let peer_id: String = rand::thread_rng().gen_ascii_chars().take(20).collect();
 
     let info = match &bencodable {
         Bencodable::Dictionary(btm) => {
@@ -77,7 +82,7 @@ fn main() {
     let bencoded = &info.unwrap();
 
     let info_hash = {
-        let mut hasher = sha1::Sha1::new();
+        let mut hasher = Sha1::new();
 
         hasher.update(bencoded);
 
@@ -105,32 +110,54 @@ fn main() {
         .map(|resp: Box<dyn Iterator<Item = tracker::TrackerPeer>>| {
             println!("got peers, starting bit torrent protocol with them...");
             let tcp_peers_w_peer_id: Vec<tracker::Peer> = resp
-                .filter_map(|p| match p {
-                    TrackerPeer::Peer(p) => Some(p),
-                    _ => None,
+                .take(6)
+                .map(|tp| match tp {
+                    TrackerPeer::Peer(p) => p,
+                    TrackerPeer::SocketAddr(sa) => {
+                        println!(
+                            "weird peer from tracker with only socket addr, no ID: {:?}",
+                            sa
+                        );
+                        let id: String = rand::thread_rng().gen_ascii_chars().take(20).collect();
+                        tracker::Peer {
+                            id: id.as_bytes().to_vec(),
+                            socket_addr: sa,
+                        }
+                    }
                 })
                 .collect::<Vec<tracker::Peer>>();
             PeerTcpClient::connect(&tcp_peers_w_peer_id, &info_hash)
         })
         .map(|ptc| {
-            let ih = ptc.info_hash.clone();
-            let c = ptc.listen();
-            let mut ss: Vec<Stream> = c.threads.into_iter().map(|(_, s)| s).collect();
-            for s in &mut ss {
-                println!("handshaking with {:?}", s);
-                s.handshake(&ih);
+            let r = ptc.listen();
+            let mut streams: Vec<Arc<Mutex<Stream>>> =
+                r.threads.into_iter().map(|(_, s)| s).collect();
+            for stream in &mut streams {
+                println!("handshaking with {:?}", stream);
+                stream.lock().unwrap().handshake(&info_hash);
             }
-            let message_receiver = c.receiver;
+            let message_receiver = r.receiver;
+
             loop {
                 println!("waiting for message...");
-                let message = message_receiver.recv();
+                let (stream, message) = message_receiver.recv().unwrap();
+                let message = message.unwrap();
                 println!("message: {:?}", message);
+                match message {
+                    Message::BitField(_) => {}
+                    Message::Choke => {
+                        stream.lock().unwrap().choke_self();
+                        stream.lock().unwrap().interested();
+                    }
+                    Message::UnChoke => stream.lock().unwrap().unchoke_self(),
+                    _ => (),
+                }
                 let ten_millis = time::Duration::from_millis(1000);
                 thread::sleep(ten_millis);
             }
         })
         .err()
     {
-        println!("Error from tracking: {:#?}", e);
+        println!("Error from tracking: {:#?}, peer_id: {:?}", e, peer_id);
     }
 }
