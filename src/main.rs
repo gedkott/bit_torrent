@@ -110,7 +110,7 @@ fn main() {
         .map(|resp: Box<dyn Iterator<Item = tracker::TrackerPeer>>| {
             println!("got peers, starting bit torrent protocol with them...");
             let tcp_peers_w_peer_id: Vec<tracker::Peer> = resp
-                .take(6)
+                .take(7)
                 .map(|tp| match tp {
                     TrackerPeer::Peer(p) => p,
                     TrackerPeer::SocketAddr(sa) => {
@@ -134,7 +134,10 @@ fn main() {
                 r.threads.into_iter().map(|(_, s)| s).collect();
             for stream in &mut streams {
                 println!("handshaking with {:?}", stream);
-                stream.lock().unwrap().handshake(&info_hash);
+                match stream.lock().unwrap().handshake(&info_hash) {
+                    Ok(_) => {},
+                    Err(e) => { println!("err handshaking: {:?}", e) }
+                }
             }
             let message_receiver = r.receiver;
 
@@ -144,10 +147,18 @@ fn main() {
                 let message = message.unwrap();
                 println!("message: {:?}", message);
                 match message {
-                    Message::BitField(_) => {}
+                    Message::BitField(_) => {
+                        match stream.lock().unwrap().interested() {
+                            Ok(_) => {},
+                            Err(e) => { println!("err with sending interested: {:?}", e) }
+                        }
+                    }
                     Message::Choke => {
                         stream.lock().unwrap().choke_self();
-                        stream.lock().unwrap().interested();
+                        match stream.lock().unwrap().interested() {
+                            Ok(_) => {},
+                            Err(e) => { println!("err with sending interested: {:?}", e) }
+                        }
                     }
                     Message::UnChoke => stream.lock().unwrap().unchoke_self(),
                     _ => (),

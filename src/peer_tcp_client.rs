@@ -45,8 +45,20 @@ impl Stream {
     }
 }
 
+#[derive(Debug)]
+pub enum HandshakeError {
+    TcpWrite,
+    TcpRead(std::io::Error)
+}
+
+#[derive(Debug)]
+pub enum InterestedError {
+    TcpWrite,
+    TcpRead
+}
+
 impl Stream {
-    pub fn handshake(&mut self, info_hash: &[u8]) {
+    pub fn handshake(&mut self, info_hash: &[u8]) -> Result<(), HandshakeError> {
         let handshake = Handshake {
             info_hash,
             peer_id: &self.peer_id,
@@ -55,33 +67,32 @@ impl Stream {
 
         let bytes: Vec<u8> = handshake.serialize();
 
-        if let Err(_e) = self.tcp_stream.write_all(&bytes) {
-        } else {
-        }
+        self.tcp_stream.write_all(&bytes)
+            .map_err(|_e| HandshakeError::TcpWrite)
+            .and_then(|_| {
+                // handshake includes reading the return handshake
+                let mut buf: [u8; 68] = [0; 68];
 
-        // handshake includes reading the return handshake
-        let mut buf: [u8; 68] = [0; 68];
-
-        let _n = match self.tcp_stream.read(&mut buf) {
-            Ok(n) => {
-                let m = Handshake::new(&buf);
-                println!("handshake from peer: {:?}", m);
-                n
-            }
-            Err(_e) => {
-                return;
-            }
-        };
+                match self.tcp_stream.read_exact(&mut buf) {
+                    Ok(_) => {
+                        let m = Handshake::new(&buf);
+                        println!("handshake from peer: {:?}", m);
+                        Ok(())
+                    }
+                    Err(_e) => {
+                        Err(HandshakeError::TcpRead(_e))
+                    }
+                }
+            })
     }
 
-    pub fn interested(&mut self) {
+    pub fn interested(&mut self) -> Result<(), InterestedError> {
         let bytes: Vec<u8> = Message::Interested.serialize();
 
-        println!("identifying as intereested in peer: {:?}", self);
+        println!("identifying as interested in peer: {:?}", self);
 
-        if let Err(_e) = self.tcp_stream.write_all(&bytes) {
-        } else {
-        }
+        self.tcp_stream.write_all(&bytes)
+            .map_err(|_e| InterestedError::TcpWrite)
     }
 
     pub fn unchoke_self(&mut self) {
@@ -115,7 +126,7 @@ impl PeerTcpClient {
             .filter_map(|p| {
                 println!("connecting to peer {:?} over tcp", p);
                 if let Ok(tcp_stream) =
-                    TcpStream::connect_timeout(&p.socket_addr, std::time::Duration::from_secs(3))
+                    TcpStream::connect_timeout(&p.socket_addr, std::time::Duration::from_secs(1))
                 {
                     println!("connected to peer over tcp");
                     Some(Stream {
@@ -149,16 +160,18 @@ impl PeerTcpClient {
                 let tx = sender.clone();
 
                 let thread_handle = thread::spawn(move || {
-                    let mut s = s_c.lock().unwrap().tcp_stream.try_clone().ok().unwrap(); // this ignores streams that failed to clone
                     let mut buf = [0u8; 256].to_vec();
+                    let mut s = s_c.lock().unwrap().tcp_stream.try_clone().ok().unwrap(); // this ignores streams that failed to clone
                     while let Ok(n) = s.read(&mut buf) {
                         if n > 0 {
                             let buf_iter = buf.clone().into_iter();
                             let m = Message::new(Box::new(buf_iter));
                             tx.send((Arc::clone(&s_c), m)).unwrap();
                         } else {
+                            // println!("Reading messages from side thread went unexpectedly...")
                         }
                     }
+                    println!("shit belw up");
                 });
                 (thread_handle, r_s_c)
             })
