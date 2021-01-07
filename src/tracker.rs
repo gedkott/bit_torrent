@@ -23,12 +23,6 @@ pub trait TrackerResponse<'a> {
     fn peers(self) -> &'a mut dyn Iterator<Item = TrackerPeer>;
 }
 
-impl<'a> TrackerResponse<'a> for &'a mut dyn Iterator<Item = TrackerPeer> {
-    fn peers(self) -> &'a mut dyn Iterator<Item = TrackerPeer> {
-        self
-    }
-}
-
 #[derive(Debug)]
 pub enum TrackerResponseError {
     BdecodeFailure(bencode::BencodeParseError),

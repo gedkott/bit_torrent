@@ -1,9 +1,12 @@
 use std::io::{Read, Write};
 use std::net::TcpStream;
-use std::sync::mpsc::{channel, Receiver};
+use std::sync::mpsc::channel;
+use std::sync::{Arc, Mutex};
 use std::thread;
 
 use crate::messages::*;
+use crate::util::read_be_u32;
+use crate::PeerClient;
 
 #[derive(Debug)]
 pub struct Stream {
@@ -15,61 +18,20 @@ pub struct Stream {
     peer_interested: bool,
 }
 
-impl Stream {
-    // fn _should_download_block(&self) -> bool {
-    //     self.am_interested && !self.peer_choking
-    // }
+impl crate::PeerStreamT for Stream {}
 
-    // fn _should_upload_block(&self) -> bool {
-    //     !self.am_choking && self.peer_interested
-    // }
-
-    fn _have(self) -> Self {
-        self
-    }
-
-    fn _bitfield(self) -> Self {
-        self
-    }
-
-    fn _request(self) -> Self {
-        self
-    }
-
-    fn _piece(self) -> Self {
-        self
-    }
-
-    fn _cancel(self) -> Self {
-        self
-    }
-}
-
-#[derive(Debug)]
-pub enum HandshakeError {
-    TcpWrite,
-    TcpRead(std::io::Error)
-}
-
-#[derive(Debug)]
-pub enum InterestedError {
-    TcpWrite,
-    TcpRead
-}
-
-impl Stream {
-    pub fn handshake(&mut self, info_hash: &[u8]) -> Result<(), HandshakeError> {
+impl crate::PeerStream for Stream {
+    fn handshake(&mut self, info_hash: &[u8]) -> Result<(), crate::HandshakeError> {
         let handshake = Handshake {
             info_hash,
             peer_id: &self.peer_id,
         };
-        println!("handshake to peer: {:?}", handshake);
-
         let bytes: Vec<u8> = handshake.serialize();
 
-        self.tcp_stream.write_all(&bytes)
-            .map_err(|_e| HandshakeError::TcpWrite)
-            .and_then(|_| {
+        self.tcp_stream
+            .write_all(&bytes)
+            .map_err(|_e| crate::HandshakeError::TcpWrite)
+            .and_then(move |_| {
                 // handshake includes reading the return handshake
                 let mut buf: [u8; 68] = [0; 68];
 
@@ -79,54 +41,35 @@ impl Stream {
                         println!("handshake from peer: {:?}", m);
                         Ok(())
                     }
-                    Err(_e) => {
-                        Err(HandshakeError::TcpRead(_e))
-                    }
+                    Err(_e) => Err(crate::HandshakeError::TcpReturnHandshakeRead(_e, buf)),
                 }
             })
     }
 
-    pub fn interested(&mut self) -> Result<(), InterestedError> {
+    fn interested(&mut self) -> Result<(), crate::InterestedError> {
+        self.am_interested = true;
         let bytes: Vec<u8> = Message::Interested.serialize();
-
-        println!("identifying as interested in peer: {:?}", self);
-
-        self.tcp_stream.write_all(&bytes)
-            .map_err(|_e| InterestedError::TcpWrite)
-    }
-
-    pub fn unchoke_self(&mut self) {
-        self.am_choking = false;
-        println!("stream being unchoked by peer: {:?}", self);
-    }
-
-    pub fn choke_self(&mut self) {
-        self.am_choking = true;
-        println!("stream being choked by peer: {:?}", self);
+        self.tcp_stream
+            .write_all(&bytes)
+            .map_err(|_e| crate::InterestedError::TcpWrite)
     }
 }
 
 pub struct PeerTcpClient {
     pub connections: Vec<Stream>,
     pub info_hash: Vec<u8>,
+    message_sender: crate::client::MessageSender,
+    message_receiver: crate::client::MessageReceiver,
 }
 
-use std::sync::{Arc, Mutex};
-
-type R = Receiver<(Arc<Mutex<Stream>>, Result<Message, MessageParseError>)>;
-pub struct Readers {
-    pub receiver: R,
-    pub threads: Vec<(std::thread::JoinHandle<()>, Arc<Mutex<Stream>>)>,
-}
-
-impl PeerTcpClient {
-    pub fn connect(peers: &[crate::tracker::Peer], info_hash: &[u8]) -> Self {
+impl PeerClient for PeerTcpClient {
+    fn connect(peers: &[crate::tracker::Peer], info_hash: &[u8]) -> Self {
         let connections: Vec<Stream> = peers
             .iter()
             .filter_map(|p| {
                 println!("connecting to peer {:?} over tcp", p);
                 if let Ok(tcp_stream) =
-                    TcpStream::connect_timeout(&p.socket_addr, std::time::Duration::from_secs(1))
+                    TcpStream::connect_timeout(&p.socket_addr, std::time::Duration::from_secs(2))
                 {
                     println!("connected to peer over tcp");
                     Some(Stream {
@@ -138,44 +81,75 @@ impl PeerTcpClient {
                         peer_interested: false,
                     })
                 } else {
-                    println!("one of our peers didn't get along with us");
+                    println!("one of our peers didn't connect");
                     None
                 }
             })
             .collect();
+
+        let (sender, receiver) = channel();
+
         PeerTcpClient {
             connections,
             info_hash: info_hash.to_vec(),
+            message_sender: sender,
+            message_receiver: receiver,
         }
     }
 
-    pub fn listen(self) -> Readers {
-        let (sender, receiver) = channel();
+    fn listen(self) -> crate::Readers {
+        let r = self.message_receiver;
+        let tx = self.message_sender;
+
         let threads = self
             .connections
             .into_iter()
             .map(|c| {
                 let s_c = Arc::new(Mutex::new(c));
                 let r_s_c = Arc::clone(&s_c);
-                let tx = sender.clone();
+                let tx = tx.clone();
 
                 let thread_handle = thread::spawn(move || {
-                    let mut buf = [0u8; 256].to_vec();
-                    let mut s = s_c.lock().unwrap().tcp_stream.try_clone().ok().unwrap(); // this ignores streams that failed to clone
-                    while let Ok(n) = s.read(&mut buf) {
-                        if n > 0 {
-                            let buf_iter = buf.clone().into_iter();
-                            let m = Message::new(Box::new(buf_iter));
-                            tx.send((Arc::clone(&s_c), m)).unwrap();
-                        } else {
-                            // println!("Reading messages from side thread went unexpectedly...")
+                    loop {
+                        let mut s = s_c.lock().unwrap().tcp_stream.try_clone().ok().unwrap(); // this ignores streams that failed to clone
+                        let mut buf = [0u8; 4].to_vec();
+                        match s
+                            .read_exact(&mut buf)
+                            .map_err(MessageParseError::PrefixLenRead)
+                            .and_then(|_| {
+                                let prefix_len = read_be_u32(&mut buf.as_slice())
+                                    .map_err(|_| MessageParseError::PrefixLenConvert)?;
+
+                                println!(
+                                    "length of next message is {:?} from {:?}",
+                                    prefix_len, buf
+                                );
+
+                                let mut message_buf = vec![0u8; prefix_len as usize];
+                                s.read_exact(&mut message_buf)
+                                    .map_err(|_| MessageParseError::MessageRead)
+                                    .map(|_| (prefix_len, message_buf))
+                            })
+                            .and_then(|(prefix_len, message_buf)| {
+                                tx.send((
+                                    Arc::clone(&s_c) as Arc<Mutex<dyn crate::PeerStreamT>>,
+                                    Message::new(Box::new(message_buf.into_iter()), prefix_len),
+                                ))
+                                .map_err(|_| MessageParseError::SendError)
+                            }) {
+                            Ok(_) => (),
+                            Err(e) => panic!("a client broke down: {:?}", e),
                         }
                     }
-                    println!("shit belw up");
                 });
-                (thread_handle, r_s_c)
+
+                (thread_handle, r_s_c as Arc<Mutex<dyn crate::PeerStreamT>>)
             })
             .collect();
-        Readers { receiver, threads }
+
+        crate::Readers {
+            receiver: r,
+            threads,
+        }
     }
 }

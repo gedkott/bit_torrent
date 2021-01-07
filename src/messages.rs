@@ -1,34 +1,10 @@
 use std::convert::TryInto;
 
+use crate::util::{attach_bytes, read_be_u32};
+
 const P_STR_LEN: u8 = 19;
 const P_STR: &str = "BitTorrent protocol";
 const RESERVED_BYTES: [u8; 8] = [0; 8];
-
-fn read_be_u32(input: &mut &[u8]) -> Result<u32, std::array::TryFromSliceError> {
-    let (int_bytes, rest) = input.split_at(std::mem::size_of::<u32>());
-    *input = rest;
-    int_bytes.try_into().map(u32::from_be_bytes)
-}
-
-fn attach_bytes(bytes: &[std::slice::Iter<'_, u8>]) -> Vec<u8> {
-    bytes.iter().cloned().flatten().cloned().collect()
-}
-
-enum WireProtocolEncoding<'a> {
-    HandshakeInteger(u8),
-    // PostHandshakeInteger(u32),
-    String(&'a str),
-}
-
-impl WireProtocolEncoding<'_> {
-    pub fn encode(&self) -> Vec<u8> {
-        match self {
-            WireProtocolEncoding::HandshakeInteger(i) => u8::to_be_bytes(*i).to_vec(),
-            // WireProtocolEncoding::PostHandshakeInteger(i) => u32::to_be_bytes(*i).to_vec(),
-            WireProtocolEncoding::String(s) => s.as_bytes().to_vec(),
-        }
-    }
-}
 
 #[derive(Debug)]
 pub struct Handshake<'a> {
@@ -54,21 +30,20 @@ pub struct RequestMessage {
 
 #[derive(Debug)]
 pub enum Message {
-    // KeepAlive,
     Choke,
     UnChoke,
     Interested,
     NotInterested,
     Have { index: u32 },
     BitField(Vec<u8>),
-    // Request(RequestMessage),
-    // Piece,
-    // Cancel,
 }
 
 #[derive(Debug)]
 pub enum MessageParseError {
-    PrefixLen,
+    SendError,
+    MessageRead,
+    PrefixLenRead(std::io::Error),
+    PrefixLenConvert,
     Id(u8),
     IdMissing,
     Have,
@@ -87,27 +62,18 @@ impl Message {
                 [4u8].iter(),
                 index.to_be_bytes().iter(),
             ]),
-            // Message::Request(mr) => attach_bytes(&[
-            //     6u32.to_be_bytes().iter(),
-            //     mr.index.to_be_bytes().iter(),
-            //     mr.begin.to_be_bytes().iter(),
-            //     mr.length.to_be_bytes().iter(),
-            // ]),
             Message::BitField(bf) => {
                 let l = bf.len();
                 let prefix_len = 1u32 + l as u32;
                 attach_bytes(&[prefix_len.to_be_bytes().iter(), [5u8].iter(), bf.iter()])
             }
-            // Message::Piece => vec![b'1'],
-            // Message::Cancel => vec![b'1'],
         }
     }
 
-    pub fn new(mut bytes: Box<dyn Iterator<Item = u8>>) -> Result<Self, MessageParseError> {
-        let b: Vec<u8> = bytes.by_ref().take(4).collect();
-        let prefix_len =
-            read_be_u32(&mut b.as_slice()).map_err(|_| MessageParseError::PrefixLen)?;
-
+    pub fn new(
+        mut bytes: Box<dyn Iterator<Item = u8>>,
+        prefix_len: u32,
+    ) -> Result<Self, MessageParseError> {
         let id = bytes.next().ok_or(MessageParseError::IdMissing)?;
 
         match id {
@@ -123,6 +89,7 @@ impl Message {
             }
             5 => {
                 let bitfield_len = prefix_len - 1;
+                println!("bitfield len should be {}", bitfield_len);
                 Ok(Message::BitField(
                     bytes.take(bitfield_len as usize).collect(),
                 ))
@@ -141,8 +108,8 @@ impl Message {
 impl<'a> Handshake<'a> {
     pub fn serialize(&self) -> Vec<u8> {
         [
-            WireProtocolEncoding::HandshakeInteger(P_STR_LEN).encode(),
-            WireProtocolEncoding::String(P_STR).encode(),
+            u8::to_be_bytes(P_STR_LEN).to_vec(),
+            P_STR.as_bytes().to_vec(),
             RESERVED_BYTES.to_vec(),
             self.info_hash.to_vec(),
             self.peer_id.to_vec(),

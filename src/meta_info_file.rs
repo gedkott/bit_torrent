@@ -20,7 +20,6 @@ struct File<'a> {
 
 #[derive(Debug)]
 enum Files<'a> {
-    // Dir(Vec<File<'a>>), // not implementing for now since example is a single file
     File(File<'a>),
 }
 
@@ -40,7 +39,8 @@ impl<'a> From<&'a Bencodable> for MetaInfoFile<'a> {
                 let info_key = &BencodableByteString::from("info");
                 match &btm[info_key] {
                     Bencodable::Dictionary(btm) => {
-                        // in current example, we see 131072 => log base 2 of 131072 = 17 (since spec says the piece length is almost always a power of 2)
+                        // in current example, we see 131072 => log base 2 of 131072 = 17
+                        // (since spec says the piece length is almost always a power of 2)
                         let piece_length_key = &BencodableByteString::from("piece length");
                         let piece_length = match btm[piece_length_key] {
                             Bencodable::Integer(i) => i,
