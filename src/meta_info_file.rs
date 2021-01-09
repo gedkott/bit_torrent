@@ -2,9 +2,9 @@ use crate::bencode::*;
 use sha1::Sha1;
 
 #[derive(Debug)]
-pub struct MetaInfoFile<'a> {
-    info: Info<'a>,
-    pub announce: &'a str,
+pub struct MetaInfoFile {
+    info: Info,
+    pub announce: String,
     announce_list: Option<Vec<Vec<String>>>,
     creation_date: Option<i32>,
     comment: Option<String>,
@@ -12,27 +12,43 @@ pub struct MetaInfoFile<'a> {
     encoding: Option<String>,
 }
 
+impl MetaInfoFile {
+    pub fn pieces(&self) -> &[String] {
+        &self.info.pieces
+    }
+
+    pub fn piece_length(&self) -> i32 {
+        self.info.piece_length
+    }
+
+    pub fn file_length(&self) -> i32 {
+        match &self.info.files {
+            Files::File(f) => f.length,
+        }
+    }
+}
+
 #[derive(Debug)]
-struct File<'a> {
+struct File {
     length: i32,
-    path: &'a str,
+    path: String,
 }
 
 #[derive(Debug)]
-enum Files<'a> {
-    File(File<'a>),
+enum Files {
+    File(File),
 }
 
 #[derive(Debug)]
-pub struct Info<'a> {
+pub struct Info {
     piece_length: i32,
     pieces: Vec<String>,
     private: Option<i32>,
-    name: &'a str,
-    files: Files<'a>,
+    name: String,
+    files: Files,
 }
 
-impl<'a> From<&'a Bencodable> for MetaInfoFile<'a> {
+impl<'a> From<&'a Bencodable> for MetaInfoFile {
     fn from(b: &'a Bencodable) -> Self {
         let info = match &b {
             Bencodable::Dictionary(btm) => {
@@ -73,10 +89,10 @@ impl<'a> From<&'a Bencodable> for MetaInfoFile<'a> {
                             piece_length,
                             pieces,
                             private: None,
-                            name,
+                            name: name.to_string(),
                             files: Files::File(File {
                                 length: *length,
-                                path: name,
+                                path: name.to_string(),
                             }),
                         }
                     }
@@ -99,7 +115,7 @@ impl<'a> From<&'a Bencodable> for MetaInfoFile<'a> {
 
         MetaInfoFile {
             info,
-            announce: announce.unwrap(),
+            announce: announce.unwrap().to_string(),
             announce_list: None,
             creation_date: None,
             comment: None,
