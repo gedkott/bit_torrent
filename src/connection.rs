@@ -25,15 +25,11 @@ pub struct PeerConnection {
     is_peer_choked: bool,
     is_local_choked: bool,
     is_peer_interested: bool,
-    is_local_interested: bool
+    is_local_interested: bool,
 }
 
 impl PeerConnection {
-    pub fn new(
-        mut stream: Stream,
-        info_hash: &[u8],
-        my_peer_id: &[u8],
-    ) -> Result<Self, SendError> {
+    pub fn new(mut stream: Stream, info_hash: &[u8], my_peer_id: &[u8]) -> Result<Self, SendError> {
         let stream_type: StreamType = match stream {
             Stream::Tcp(_) => StreamType::Tcp,
         };
@@ -47,7 +43,8 @@ impl PeerConnection {
         println!("writing handshake frame: {:?}", handshake);
         let write_result = stream.write_all(&bytes).map_err(|e| SendError::Write(e));
 
-        write_result.and_then(|_| {
+        write_result
+            .and_then(|_| {
                 // handshake includes reading the return handshake
                 let work = Box::new(move || {
                     let mut buf: Vec<u8> = vec![0; 68];
@@ -76,14 +73,18 @@ impl PeerConnection {
                     }
                 })
             })
-            .map(|(buf, stream)| (Handshake::new(&buf).map_err(|_| SendError::HandshakeParse), stream))
-            .map(|(_, s)| PeerConnection {
+            .and_then(|(buf, stream)| {
+                Handshake::new(&buf)
+                    .map_err(|_| SendError::HandshakeParse)
+                    .map(|_| stream)
+            })
+            .map(|s| PeerConnection {
                 stream: s,
                 stream_type,
                 is_local_choked: true,
                 is_peer_choked: true,
                 is_local_interested: false,
-                is_peer_interested: false
+                is_peer_interested: false,
             })
     }
 
@@ -100,7 +101,7 @@ impl PeerConnection {
                 };
 
                 write_result
-            },
+            }
         }
     }
 

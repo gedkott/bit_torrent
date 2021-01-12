@@ -68,7 +68,7 @@ fn process_frame(frame: Message, c: &mut PeerConnection) {
     match frame {
         Message::KeepAlive => {
             c.write_message(Message::KeepAlive);
-        },
+        }
         Message::Choke => (),
         Message::UnChoke => {
             c.write_message(Message::Request {
@@ -76,7 +76,7 @@ fn process_frame(frame: Message, c: &mut PeerConnection) {
                 begin: 0,
                 length: 16384,
             });
-        },
+        }
         Message::Interested => (),
         Message::NotInterested => (),
         Message::Have { index } => {
@@ -167,41 +167,43 @@ fn main() {
                 let peer_id = Arc::clone(&peer_id);
                 let stats = Arc::clone(&stats);
                 std::thread::spawn(move || {
-                    if let Err(e) = std::net::TcpStream::connect_timeout(
-                        &socket_addr,
-                        CONNECTION_TIMEOUT,
-                    )
-                        .map_err(SendError::Connect)
-                        .and_then(|s| {
-                            stats.tcp_connected.update();
-                            stats.tcp_peers.update();
-                            PeerConnection::new(
-                                Stream::Tcp(s),
-                                &info_hash,
-                                peer_id.as_bytes(),
-                            )
-                        })
-                        .map(|mut c| {
-                            // std::thread::spawn(move || {
+                    if let Err(e) =
+                        std::net::TcpStream::connect_timeout(&socket_addr, CONNECTION_TIMEOUT)
+                            .map_err(SendError::Connect)
+                            .and_then(|s| {
+                                stats.tcp_connected.update();
+                                stats.tcp_peers.update();
+                                PeerConnection::new(Stream::Tcp(s), &info_hash, peer_id.as_bytes())
+                            })
+                            .map(|mut c| {
+                                // std::thread::spawn(move || {
                                 loop {
                                     let r = c.read_message();
                                     match r {
                                         Ok(frame) => {
-                                            println!("frame: {:?}", match &frame {
-                                                Message::Piece { index, offset, .. } => format!("Piece {{ index: {:?}, offset: {:?} }}", index, offset),
-                                                frame => format!("{:?}", frame) 
-                                            });
+                                            println!(
+                                                "frame: {:?}",
+                                                match &frame {
+                                                    Message::Piece { index, offset, .. } =>
+                                                        format!(
+                                                            "Piece {{ index: {:?}, offset: {:?} }}",
+                                                            index, offset
+                                                        ),
+                                                    frame => format!("{:?}", frame),
+                                                }
+                                            );
                                             process_frame(frame, &mut c);
-                                        },
+                                        }
                                         Err(e) => {
                                             panic!("could not read frame {:?}", e)
                                         }
                                     }
                                 }
-                            // });
-                        }) {
-                            println!("thread spawn went wonky {:?}", e);
-                        }
+                                // });
+                            })
+                    {
+                        println!("thread spawn went wonky {:?}", e);
+                    }
                 })
             };
             peers.into_iter().map(peer_thread)

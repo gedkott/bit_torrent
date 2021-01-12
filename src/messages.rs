@@ -83,7 +83,7 @@ impl Message {
                     5u8.to_be_bytes().iter(),
                     bf.iter(),
                 ])
-            },
+            }
             Message::Request {
                 index,
                 begin,
@@ -125,8 +125,9 @@ impl Message {
                 3 => Ok(Message::NotInterested),
                 4 => {
                     let b: Vec<u8> = bytes.by_ref().take(4).collect();
-                    let index = read_be_u32(&mut b.as_slice()).map_err(|_| MessageParseError::Have)?;
-    
+                    let index =
+                        read_be_u32(&mut b.as_slice()).map_err(|_| MessageParseError::Have)?;
+
                     Ok(Message::Have { index })
                 }
                 5 => {
@@ -140,12 +141,13 @@ impl Message {
                 // piece
                 7 => {
                     let b: Vec<u8> = bytes.by_ref().take(4).collect();
-                    let index = read_be_u32(&mut b.as_slice()).map_err(|_| MessageParseError::Piece)?;
-    
+                    let index =
+                        read_be_u32(&mut b.as_slice()).map_err(|_| MessageParseError::Piece)?;
+
                     let b: Vec<u8> = bytes.by_ref().take(4).collect();
                     let offset =
                         read_be_u32(&mut b.as_slice()).map_err(|_| MessageParseError::Piece)?;
-    
+
                     let data_block_len = prefix_len - 9;
                     Ok(Message::Piece {
                         index,
