@@ -1,7 +1,6 @@
 use crate::messages::*;
 use crate::util;
 use std::io::prelude::*;
-use std::sync::{Arc, Mutex};
 
 #[derive(Debug)]
 pub enum SendError {
@@ -21,7 +20,7 @@ pub enum StreamType {
 }
 
 pub struct PeerConnection {
-    stream: Arc<Mutex<Stream>>,
+    stream: Stream,
     pub stream_type: StreamType,
     is_peer_choked: bool,
     is_local_choked: bool,
@@ -45,23 +44,18 @@ impl PeerConnection {
         };
         let bytes: Vec<u8> = handshake.serialize();
 
-        let write_result = {
-            println!("writing handshake frame: {:?}", handshake);
-            stream.write_all(&bytes).map_err(|e| SendError::Write(e))
-        };
+        println!("writing handshake frame: {:?}", handshake);
+        let write_result = stream.write_all(&bytes).map_err(|e| SendError::Write(e));
 
-        let arc_stream = Arc::new(Mutex::new(stream));
-        let thread_stream = Arc::clone(&arc_stream);
-        
         write_result.and_then(|_| {
                 // handshake includes reading the return handshake
                 let work = Box::new(move || {
                     let mut buf: Vec<u8> = vec![0; 68];
                     println!("reading handshake frame");
-                    match thread_stream.lock().unwrap().read_exact(&mut buf) {
+                    match stream.read_exact(&mut buf) {
                         Ok(_) => {
                             println!("succesfully read handshake frame");
-                            Ok(buf)
+                            Ok((buf, stream))
                         }
                         Err(e) => {
                             println!("failed to read handshake frame");
@@ -82,9 +76,9 @@ impl PeerConnection {
                     }
                 })
             })
-            .and_then(|buf| Handshake::new(&buf).map_err(|_| SendError::HandshakeParse))
-            .map(|_| PeerConnection {
-                stream: arc_stream,
+            .map(|(buf, stream)| (Handshake::new(&buf).map_err(|_| SendError::HandshakeParse), stream))
+            .map(|(_, s)| PeerConnection {
+                stream: s,
                 stream_type,
                 is_local_choked: true,
                 is_peer_choked: true,
@@ -101,8 +95,6 @@ impl PeerConnection {
                 let write_result = {
                     println!("writing message: {:?}", m);
                     self.stream
-                        .lock()
-                        .unwrap()
                         .write_all(&bytes)
                         .map_err(|e| SendError::Write(e))
                 };
@@ -117,8 +109,6 @@ impl PeerConnection {
 
         let read_prefix_len_result = {
             self.stream
-                .lock()
-                .unwrap()
                 .read_exact(&mut buf)
                 .map_err(MessageParseError::PrefixLenRead)
         };
@@ -133,8 +123,6 @@ impl PeerConnection {
                     Ok((vec![], 0))
                 } else {
                     self.stream
-                        .lock()
-                        .unwrap()
                         .read_exact(&mut message_buf)
                         .map_err(|_| MessageParseError::MessageRead)
                         .map(|_| (message_buf, prefix_len))
