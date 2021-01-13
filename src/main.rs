@@ -1,138 +1,44 @@
-use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::prelude::*;
+use std::sync::{Arc, Mutex};
+
+use sha1::Sha1;
 
 mod bencode;
 use bencode::*;
 
+mod meta_info_file;
+use meta_info_file::*;
+
 mod tracker;
 use tracker::*;
 
+mod messages;
+use messages::*;
+
+mod util;
+use util::{random_string, AtomicCounter};
+
+mod connection;
+use connection::*;
+
+const TORRENT_FILE: &str = "Charlie_Chaplin_Mabels_Strange_Predicament.avi.torrent";
+const CONNECTION_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(100);
+
 #[derive(Debug)]
-struct MetaInfoFile<'a> {
-    info: Info<'a>,
-    announce: &'a str,
-    announce_list: Option<Vec<Vec<String>>>,
-    creation_date: Option<i32>,
-    comment: Option<String>,
-    created_by: Option<String>,
-    encoding: Option<String>,
+struct Stats {
+    from_tracker: AtomicCounter,
+    tcp_connected: AtomicCounter,
+    tcp_peers: AtomicCounter,
 }
 
-struct Info<'a> {
-    piece_length: i32,
-    pieces: &'a [u8],
-    private: Option<i32>,
-}
-
-impl std::fmt::Debug for Info<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let pieces = std::str::from_utf8(&self.pieces).unwrap_or("BYTES");
-        f.debug_struct("Info")
-            .field("pieces_length", &self.piece_length)
-            .field("private", &self.private)
-            .field("pieces", &pieces)
-            .finish()
-    }
-}
-
-impl<'a> From<&'a Bencodable> for MetaInfoFile<'a> {
-    fn from(b: &'a Bencodable) -> Self {
-        let info = match &b {
-            Bencodable::Dictionary(btm) => {
-                let info_key = &BencodableByteString::from("info");
-                match &btm[info_key] {
-                    Bencodable::Dictionary(btm) => {
-                        let piece_length_key = &BencodableByteString::from("piece length");
-                        let piece_length = match btm[piece_length_key] {
-                            Bencodable::Integer(i) => i,
-                            _ => panic!("did not find piece length"),
-                        };
-
-                        let pieces_key = &BencodableByteString::from("pieces");
-                        let pieces = match &btm[pieces_key] {
-                            Bencodable::ByteString(bs) => bs.as_bytes(),
-                            _ => panic!("did not find pieces"),
-                        };
-
-                        Info {
-                            piece_length,
-                            pieces,
-                            private: None,
-                        }
-                    }
-                    _ => panic!("did not find info"),
-                }
-            }
-            _ => panic!("did not find dictionary for Metainfo file structure"),
-        };
-
-        let announce = match &b {
-            Bencodable::Dictionary(btm) => {
-                let info_key = &BencodableByteString::from("announce");
-                match &btm[info_key] {
-                    Bencodable::ByteString(bs) => bs.as_string(),
-                    _ => panic!("did not find announce"),
-                }
-            }
-            _ => panic!("did not find dictionary for Metainfo file structure"),
-        };
-
-        MetaInfoFile {
-            info,
-            announce: announce.unwrap(),
-            announce_list: None,
-            creation_date: None,
-            comment: None,
-            created_by: None,
-            encoding: None,
-        }
-    }
-}
-
-const TORRENT_FILE: &str = "6201484321_f1a88ca2cb_b_archive.torrent";
-const MY_TORRENT_COPY: &str = "myfile.torrent";
-
-fn main() {
-    let mut examples = BTreeMap::new();
-    examples.insert(
-        BencodableByteString::from("Gedalia"),
-        Bencodable::from("Gedalia"),
-    );
-    examples.insert(BencodableByteString::from("a"), Bencodable::Integer(1));
-    assert_eq!(
-        bencode(&Bencodable::Dictionary(examples)).unwrap(),
-        b"d7:Gedalia7:Gedalia1:ai1ee".to_vec()
-    );
-
-    assert_eq!(bdecode(b"4:spam").unwrap(), Bencodable::from("spam"));
-
+fn read_meta_info_file() -> (MetaInfoFile, String, [u8; 20]) {
     let mut f = File::open(TORRENT_FILE).unwrap();
     let mut bytes = Vec::new();
     f.read_to_end(&mut bytes).unwrap();
     let bytes_slice = bytes.as_slice();
-    let decoded_original = bdecode(bytes_slice).unwrap();
-
-    File::create(MY_TORRENT_COPY)
-        .and_then(|mut f| f.write_all(bencode(&decoded_original).unwrap().as_slice()))
-        .ok();
-
-    let mut f = File::open(MY_TORRENT_COPY).unwrap();
-    let mut bytes = Vec::new();
-    f.read_to_end(&mut bytes).unwrap();
-
-    let decoded_from_new_file_written_with_encoded_original = bdecode(bytes.as_slice()).unwrap();
-
-    assert_eq!(
-        decoded_original,
-        decoded_from_new_file_written_with_encoded_original
-    );
-
-    let bencodable = decoded_from_new_file_written_with_encoded_original;
-
+    let bencodable = bdecode(bytes_slice).unwrap();
     let meta_info = MetaInfoFile::from(&bencodable);
-
-    let peer_id = { "-qB4030-i.52DyS4ir)l" };
 
     let info = match &bencodable {
         Bencodable::Dictionary(btm) => {
@@ -145,27 +51,82 @@ fn main() {
         _ => panic!("did not find dictionary for Metainfo file structure for info hash"),
     };
 
-    let bencoded = &info.unwrap();
-
     let info_hash = {
-        let mut hasher = sha1::Sha1::new();
-
-        hasher.update(bencoded);
-
-        let bytes = hasher.digest().bytes();
-
-        let url_encoded =
-            percent_encoding::percent_encode(&bytes, percent_encoding::NON_ALPHANUMERIC)
-                .to_string();
-
-        url_encoded
+        let mut hasher = Sha1::new();
+        hasher.update(&info.unwrap());
+        hasher.digest().bytes()
     };
+
+    let info_encoded =
+        percent_encoding::percent_encode(&info_hash, percent_encoding::NON_ALPHANUMERIC)
+            .to_string();
+
+    (meta_info, info_encoded, info_hash)
+}
+
+fn process_frame(frame: Message, c: &mut PeerConnection) {
+    match frame {
+        Message::KeepAlive => {
+            c.write_message(Message::KeepAlive);
+        }
+        Message::Choke => (),
+        Message::UnChoke => {
+            c.write_message(Message::Request {
+                index: 0,
+                begin: 0,
+                length: 16384,
+            });
+        }
+        Message::Interested => (),
+        Message::NotInterested => (),
+        Message::Have { index } => {
+            c.write_message(Message::Interested);
+        }
+        Message::BitField(bf) => {
+            c.write_message(Message::Interested);
+        }
+        Message::Request {
+            index,
+            begin,
+            length,
+        } => {
+            // c.write_message(Message::Interested);
+        }
+        Message::Piece {
+            index,
+            offset,
+            data,
+        } => {
+            println!(
+                "got piece from index {:?} at offset {:?} for {:?} bytes",
+                index,
+                offset,
+                data.len()
+            )
+        }
+    }
+}
+
+fn main() {
+    let (meta_info, info_encoded, info_hash) = read_meta_info_file();
+    println!("torrent has {:?} pieces", meta_info.pieces().len());
+    println!(
+        "torrent pieces are each {:?} bytes",
+        meta_info.piece_length()
+    );
+    println!("torrent file size is {:?} bytes", meta_info.file_length());
+    let peer_id = Arc::new(random_string());
+    let stats = Arc::new(Stats {
+        from_tracker: AtomicCounter::new(),
+        tcp_connected: AtomicCounter::new(),
+        tcp_peers: AtomicCounter::new(),
+    });
 
     if let Some(e) = Tracker::new()
         .track(
             &format!(
                 "{}?info_hash={}&peer_id={}",
-                &meta_info.announce, info_hash, peer_id
+                &meta_info.announce, info_encoded, peer_id
             ),
             TrackerRequestParameters {
                 port: 8999,
@@ -175,9 +136,90 @@ fn main() {
                 event: Event::Started,
             },
         )
-        .map(|resp| println!("Response {:#?}", resp))
+        .map(|resp: Box<dyn Iterator<Item = tracker::TrackerPeer>>| {
+            let stats = Arc::clone(&stats);
+            resp.map(|tp| {
+                stats.from_tracker.update();
+                match tp {
+                    TrackerPeer::Peer(p) => p,
+                    TrackerPeer::SocketAddr(sa) => {
+                        println!(
+                            "weird peer from tracker with only socket addr, no ID: {:?}",
+                            sa
+                        );
+                        let id = random_string();
+                        tracker::Peer {
+                            id: id.as_bytes().to_vec(),
+                            socket_addr: sa,
+                        }
+                    }
+                }
+            })
+            .collect()
+        })
+        .map(|peers: Vec<tracker::Peer>| {
+            // in parallel, complete handshake sequence with each peer we connected to successfully
+            let stats = Arc::clone(&stats);
+            println!("kicking off handshaking for everyone");
+            let peer_thread = move |p: tracker::Peer| {
+                let socket_addr = p.socket_addr;
+                let stats = Arc::clone(&stats);
+                let peer_id = Arc::clone(&peer_id);
+                let stats = Arc::clone(&stats);
+                std::thread::spawn(move || {
+                    if let Err(e) =
+                        std::net::TcpStream::connect_timeout(&socket_addr, CONNECTION_TIMEOUT)
+                            .map_err(SendError::Connect)
+                            .and_then(|s| {
+                                stats.tcp_connected.update();
+                                stats.tcp_peers.update();
+                                PeerConnection::new(Stream::Tcp(s), &info_hash, peer_id.as_bytes())
+                            })
+                            .map(|mut c| {
+                                // std::thread::spawn(move || {
+                                loop {
+                                    let r = c.read_message();
+                                    match r {
+                                        Ok(frame) => {
+                                            println!(
+                                                "frame: {:?}",
+                                                match &frame {
+                                                    Message::Piece { index, offset, .. } =>
+                                                        format!(
+                                                            "Piece {{ index: {:?}, offset: {:?} }}",
+                                                            index, offset
+                                                        ),
+                                                    frame => format!("{:?}", frame),
+                                                }
+                                            );
+                                            process_frame(frame, &mut c);
+                                        }
+                                        Err(e) => {
+                                            panic!("could not read frame {:?}", e)
+                                        }
+                                    }
+                                }
+                                // });
+                            })
+                    {
+                        println!("thread spawn went wonky {:?}", e);
+                    }
+                })
+            };
+            peers.into_iter().map(peer_thread)
+        })
+        .map(|jhs| {
+            let stats = Arc::clone(&stats);
+            std::thread::spawn(move || loop {
+                println!("stats: {:?}", stats);
+                std::thread::sleep(std::time::Duration::from_secs(10))
+            });
+            for jh in jhs {
+                jh.join();
+            }
+        })
         .err()
     {
-        println!("Error from tracking: {:?}", e);
+        println!("Error from tracking: {:#?}", e);
     }
 }
