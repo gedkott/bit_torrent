@@ -17,43 +17,31 @@ pub enum Stream {
     Tcp(std::net::TcpStream),
 }
 
-pub enum StreamType {
-    Tcp,
-}
-
 pub struct PeerConnection {
-    pub stream: Stream,
-    pub stream_type: StreamType,
-    _is_peer_choked: bool,
-    pub is_local_choked: bool,
-    _is_peer_interested: bool,
+    stream: Stream,
     pub is_local_interested: bool,
     pub bitfield: Option<BitField>,
 }
 
 impl PeerConnection {
     pub fn new(mut stream: Stream, info_hash: &[u8], my_peer_id: &[u8]) -> Result<Self, SendError> {
-        let stream_type: StreamType = match stream {
-            Stream::Tcp(_) => StreamType::Tcp,
-        };
-
         let handshake = Handshake {
             info_hash: info_hash.to_vec(),
             peer_id: my_peer_id.to_vec(),
         };
         let bytes: Vec<u8> = handshake.serialize();
 
-        let write_result = stream.write_all(&bytes).map_err(SendError::Write);
-
-        write_result
+        stream
+            .write_all(&bytes)
+            .map_err(SendError::Write)
             .and_then(|_| {
-                let work = Box::new(move || {
+                let work = move || {
                     let mut buf: Vec<u8> = vec![0; 68];
-                    match stream.read_exact(&mut buf) {
-                        Ok(_) => Ok((buf, stream)),
-                        Err(e) => Err(SendError::ReturnHandshakeRead(e)),
-                    }
-                });
+                    stream
+                        .read_exact(&mut buf)
+                        .map(|_| (buf, stream))
+                        .map_err(SendError::ReturnHandshakeRead)
+                };
 
                 util::with_timeout(work, std::time::Duration::from_millis(1500)).map_err(
                     |e| match e {
@@ -71,19 +59,15 @@ impl PeerConnection {
             })
             .map(|s| PeerConnection {
                 stream: s,
-                stream_type,
-                is_local_choked: true,
-                _is_peer_choked: true,
                 is_local_interested: false,
-                _is_peer_interested: false,
                 bitfield: None,
             })
     }
 
     pub fn write_message(&mut self, m: Message) -> Result<(), SendError> {
-        let bytes: Vec<u8> = m.serialize();
-
-        self.stream.write_all(&bytes).map_err(SendError::Write)
+        self.stream
+            .write_all(&m.serialize())
+            .map_err(SendError::Write)
     }
 
     pub fn read_message(&mut self) -> Result<Message, MessageParseError> {
@@ -95,10 +79,10 @@ impl PeerConnection {
             .and_then(|_| {
                 let prefix_len = util::read_be_u32(&mut buf.as_slice())
                     .map_err(|_| MessageParseError::PrefixLenConvert)?;
-                let mut message_buf = vec![0u8; prefix_len as usize];
                 if prefix_len == 0 {
                     Ok((vec![], 0))
                 } else {
+                    let mut message_buf = vec![0u8; prefix_len as usize];
                     self.stream
                         .read_exact(&mut message_buf)
                         .map_err(|_| MessageParseError::MessageRead)
