@@ -1,6 +1,5 @@
 use rand::Rng;
 use std::convert::TryInto;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::channel;
 use std::thread;
 
@@ -49,23 +48,5 @@ where
     {
         Ok(r) => r,
         Err(e) => Err(e),
-    }
-}
-
-#[derive(Debug)]
-pub struct AtomicCounter {
-    count: AtomicUsize,
-}
-
-impl AtomicCounter {
-    pub fn new() -> Self {
-        AtomicCounter {
-            count: AtomicUsize::new(0),
-        }
-    }
-
-    pub fn update(&self) {
-        self.count
-            .store(self.count.load(Ordering::SeqCst) + 1, Ordering::SeqCst);
     }
 }

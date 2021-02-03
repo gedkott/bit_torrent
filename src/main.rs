@@ -1,5 +1,10 @@
 use std::fs::File;
+use std::net::{SocketAddr, TcpStream};
 use std::sync::{Arc, Mutex};
+use std::thread::{sleep, spawn, JoinHandle};
+use std::time::Duration;
+
+use percent_encoding::{percent_encode, NON_ALPHANUMERIC};
 
 mod bencode;
 use bencode::*;
@@ -8,13 +13,13 @@ mod meta_info_file;
 use meta_info_file::*;
 
 mod tracker;
-use tracker::*;
+use tracker::{Event, Peer, Tracker, TrackerPeer, TrackerRequestParameters};
 
 mod messages;
 use messages::*;
 
 mod util;
-use util::{random_string, AtomicCounter};
+use util::random_string;
 
 mod connection;
 use connection::*;
@@ -26,34 +31,25 @@ mod bitfield;
 use bitfield::BitField;
 
 const TORRENT_FILE: &str = "Charlie_Chaplin_Mabels_Strange_Predicament.avi.torrent";
-const CONNECTION_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(750);
-
-#[derive(Debug)]
-struct Stats {
-    from_tracker: AtomicCounter,
-    tcp_connected: AtomicCounter,
-    tcp_peers: AtomicCounter,
-}
+const CONNECTION_TIMEOUT: Duration = Duration::from_millis(750);
+const PROGRESS_TIMER: Duration = Duration::from_secs(15);
 
 fn connect(
-    socket_addr: std::net::SocketAddr,
+    socket_addr: SocketAddr,
     info_hash: [u8; 20],
     peer_id: String,
-    stats: Arc<Stats>,
 ) -> Result<PeerConnection, SendError> {
-    std::net::TcpStream::connect_timeout(&socket_addr, CONNECTION_TIMEOUT)
+    TcpStream::connect_timeout(&socket_addr, CONNECTION_TIMEOUT)
         .map_err(SendError::Connect)
-        .and_then(|s| {
-            stats.tcp_connected.update();
-            stats.tcp_peers.update();
-            PeerConnection::new(Stream::Tcp(s), &info_hash, peer_id.as_bytes())
-        })
+        .and_then(|s| PeerConnection::new(Stream::Tcp(s), &info_hash, peer_id.as_bytes()))
 }
+
+type Blocks = Vec<Option<(u32, u32, u32)>>;
 
 fn request_blocks(torrent: Arc<Mutex<Torrent>>, c: &mut PeerConnection) -> bool {
     let bf = c.bitfield.as_ref().unwrap();
     let mut t = torrent.lock().unwrap();
-    let blocks: Vec<Option<(u32, u32, u32)>> = (0..5).map(|_| t.get_next_block(&bf)).collect();
+    let blocks: Blocks = (0..5).map(|_| t.get_next_block(&bf)).collect();
     for b in blocks {
         match b {
             Some((index, offset, length)) => {
@@ -127,16 +123,47 @@ fn process_frame(
     are_we_done_yet(t)
 }
 
+fn generate_peer_threads(
+    p: Peer,
+    peer_id: String,
+    info_hash: [u8; 20],
+    t: Arc<Mutex<Torrent>>,
+) -> PeerThreads {
+    (0..8)
+        .map(|_| {
+            println!("spawning thread for {:?}", p);
+            let peer_id = peer_id.clone();
+            let socket_addr = p.socket_addr;
+            let t = Arc::clone(&t);
+            spawn(move || {
+                if let Ok(mut c) = connect(socket_addr, info_hash, peer_id) {
+                    let mut done = false;
+                    while !done {
+                        let m = { c.read_message() };
+                        match m {
+                            Ok(frame) => {
+                                done = process_frame(Arc::clone(&t), frame, &mut c);
+                                if !done {
+                                    request_blocks(Arc::clone(&t), &mut c);
+                                }
+                            }
+                            Err(_) => {
+                                break;
+                            }
+                        }
+                    }
+                }
+            })
+        })
+        .collect::<Vec<JoinHandle<()>>>()
+}
+
+type TrackerPeerResponse = Box<dyn Iterator<Item = TrackerPeer>>;
+type PeerThreads = Vec<JoinHandle<()>>;
+
 fn main() {
     let meta_info = MetaInfoFile::from(File::open(TORRENT_FILE).unwrap());
-    let info_encoded =
-        percent_encoding::percent_encode(&meta_info.info_hash, percent_encoding::NON_ALPHANUMERIC)
-            .to_string();
-    let stats = Arc::new(Stats {
-        from_tracker: AtomicCounter::new(),
-        tcp_connected: AtomicCounter::new(),
-        tcp_peers: AtomicCounter::new(),
-    });
+    let info_encoded = percent_encode(&meta_info.info_hash, NON_ALPHANUMERIC).to_string();
     let peer_id = random_string();
 
     let peers = Tracker::new()
@@ -153,61 +180,23 @@ fn main() {
                 event: Event::Started,
             },
         )
-        .map(|resp: Box<dyn Iterator<Item = tracker::TrackerPeer>>| {
-            let stats = Arc::clone(&stats);
-            resp.map(|tp| {
-                stats.from_tracker.update();
-                Peer::from(tp)
-            })
-            .collect()
-        });
+        .map(|resp: TrackerPeerResponse| resp.map(Peer::from).collect());
 
     let torrent = Arc::new(Mutex::new(Torrent::new(&meta_info)));
-    if let Ok((jhs, torrent)) = peers.map(|peers: Vec<tracker::Peer>| {
-        let stats = Arc::clone(&stats);
-        let join_handles: Vec<Vec<std::thread::JoinHandle<()>>> = peers
-            .iter()
+    if let Ok((jhs, torrent)) = peers.map(|peers: Vec<Peer>| {
+        let join_handles: Vec<PeerThreads> = peers
+            .into_iter()
             .map(|p| {
-                (0..8)
-                    .map(|_| {
-                        let peer_id = peer_id.clone();
-                        let socket_addr = p.socket_addr;
-                        let stats = Arc::clone(&stats);
-
-                        let stats = Arc::clone(&stats);
-                        let info_hash = meta_info.info_hash;
-                        let t = Arc::clone(&torrent);
-
-                        println!("spawning thread for {:?}", p);
-                        std::thread::spawn(move || {
-                            if let Ok(mut c) = connect(socket_addr, info_hash, peer_id, stats) {
-                                let mut done = false;
-                                while !done {
-                                    let m = { c.read_message() };
-                                    match m {
-                                        Ok(frame) => {
-                                            done = process_frame(Arc::clone(&t), frame, &mut c);
-                                            if !done {
-                                                request_blocks(Arc::clone(&t), &mut c);
-                                            }
-                                        }
-                                        Err(e) => {
-                                            println!("could not read frame {:?}", e);
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-                        })
-                    })
-                    .collect()
+                let peer_id = peer_id.clone();
+                let t = Arc::clone(&torrent);
+                generate_peer_threads(p, peer_id, meta_info.info_hash, t)
             })
             .collect();
         (join_handles, torrent)
     }) {
         let t = Arc::clone(&torrent);
-        std::thread::spawn(move || loop {
-            std::thread::sleep(std::time::Duration::from_secs(15));
+        spawn(move || loop {
+            sleep(PROGRESS_TIMER);
             let p = { t.lock().unwrap().progress() };
             println!(
                 "progress: {}, completed: {}, in progress: {}, not requested: {}",
@@ -221,9 +210,7 @@ fn main() {
             }
         }
 
-        let _ = {
-            torrent.lock().unwrap().to_file();
-        };
+        let _ = torrent.lock().unwrap().to_file();
     } else {
         panic!("{:?}",);
     }
