@@ -1,20 +1,24 @@
 use crate::messages::*;
 use crate::util;
+use crate::util::ExecutionErr;
 use crate::BitField;
 use std::io::prelude::*;
+use std::io::Error as IOError;
+use std::net::TcpStream;
+use std::time::Duration;
 
 #[derive(Debug)]
 pub enum SendError {
     HandshakeParse,
-    Write(std::io::Error),
-    ReturnHandshakeRead(std::io::Error),
+    Write(IOError),
+    ReturnHandshakeRead(IOError),
     ReturnHandshakeReadTimeOut,
-    Connect(std::io::Error),
+    Connect(IOError),
 }
 
 #[derive(Debug)]
 pub enum Stream {
-    Tcp(std::net::TcpStream),
+    Tcp(TcpStream),
 }
 
 pub struct PeerConnection {
@@ -22,6 +26,8 @@ pub struct PeerConnection {
     pub is_local_interested: bool,
     pub bitfield: Option<BitField>,
 }
+
+const HANDSHAKE_READ_TIMEOUT: Duration = Duration::from_millis(1500);
 
 impl PeerConnection {
     pub fn new(mut stream: Stream, info_hash: &[u8], my_peer_id: &[u8]) -> Result<Self, SendError> {
@@ -43,14 +49,10 @@ impl PeerConnection {
                         .map_err(SendError::ReturnHandshakeRead)
                 };
 
-                util::with_timeout(work, std::time::Duration::from_millis(1500)).map_err(
-                    |e| match e {
-                        crate::util::ExecutionErr::TimedOut => {
-                            SendError::ReturnHandshakeReadTimeOut
-                        }
-                        crate::util::ExecutionErr::Err(e) => e,
-                    },
-                )
+                util::with_timeout(work, HANDSHAKE_READ_TIMEOUT).map_err(|e| match e {
+                    ExecutionErr::TimedOut => SendError::ReturnHandshakeReadTimeOut,
+                    ExecutionErr::Err(e) => e,
+                })
             })
             .and_then(|(buf, stream)| {
                 Handshake::new(&buf)
@@ -96,13 +98,13 @@ impl PeerConnection {
 }
 
 impl std::io::Write for Stream {
-    fn write(&mut self, buf: &[u8]) -> Result<usize, std::io::Error> {
+    fn write(&mut self, buf: &[u8]) -> Result<usize, IOError> {
         match self {
             Stream::Tcp(ts) => ts.write(buf),
         }
     }
 
-    fn flush(&mut self) -> Result<(), std::io::Error> {
+    fn flush(&mut self) -> Result<(), IOError> {
         match self {
             Stream::Tcp(ts) => ts.flush(),
         }
@@ -110,7 +112,7 @@ impl std::io::Write for Stream {
 }
 
 impl std::io::Read for Stream {
-    fn read(&mut self, buf: &mut [u8]) -> Result<usize, std::io::Error> {
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize, IOError> {
         match self {
             Stream::Tcp(ts) => ts.read(buf),
         }
