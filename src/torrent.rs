@@ -127,7 +127,6 @@ impl Torrent {
                     }
                 }
             } else {
-                println!("connection didn't have bit {:?} set", p.index as usize);
                 continue;
             }
         }

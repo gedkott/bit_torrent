@@ -96,7 +96,6 @@ fn process_frame(
             }
         }
         Message::BitField(bf) => {
-            println!("bitfield {:?}, len: {:?}", bf, bf.len());
             let is_interested = c.is_local_interested;
             if !is_interested {
                 c.is_local_interested = true;
@@ -131,7 +130,6 @@ fn generate_peer_threads(
 ) -> PeerThreads {
     (0..8)
         .map(|_| {
-            println!("spawning thread for {:?}", p);
             let peer_id = peer_id.clone();
             let socket_addr = p.socket_addr;
             let t = Arc::clone(&t);

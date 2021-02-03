@@ -29,10 +29,6 @@ impl From<TrackerPeer> for Peer {
         match tp {
             TrackerPeer::Peer(p) => p,
             TrackerPeer::SocketAddr(sa) => {
-                println!(
-                    "weird peer from tracker with only socket addr, no ID: {:?}",
-                    sa
-                );
                 let id = random_string();
                 Peer {
                     id: id.as_bytes().to_vec(),
