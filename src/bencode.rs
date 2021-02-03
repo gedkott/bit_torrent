@@ -338,7 +338,7 @@ mod tests {
     fn it_encodes_integers() {
         let result = bencode(&Bencodable::Integer(311)).unwrap();
         let as_slice = result.as_slice();
-        assert_eq!(as_slice, "i-311e".as_bytes());
+        assert_eq!(as_slice, "i311e".as_bytes());
     }
 
     #[test]
@@ -360,7 +360,7 @@ mod tests {
     #[test]
     fn it_encodes_lists() {
         assert_eq!(
-            "l4:spam4:eggsi-341ee",
+            "l4:spam4:eggsi341ee",
             std::str::from_utf8(
                 &bencode(&Bencodable::List(vec!(
                     Bencodable::from("spam"),
@@ -409,12 +409,12 @@ mod tests {
 
     #[test]
     fn it_decodes_lists() {
-        assert_eq!(bdecode(b"i-3e").unwrap(), Bencodable::Integer(3));
+        assert_eq!(bdecode(b"i3e").unwrap(), Bencodable::Integer(3));
     }
 
     #[test]
     fn it_decodes_integers() {
-        assert_eq!(bdecode(b"i-341e").unwrap(), Bencodable::Integer(341));
+        assert_eq!(bdecode(b"i341e").unwrap(), Bencodable::Integer(341));
     }
 
     #[test]
@@ -425,7 +425,7 @@ mod tests {
     #[test]
     fn it_decodes_heterogenous_lists() {
         assert_eq!(
-            bdecode(b"l4:spam4:eggsi-341ee").unwrap(),
+            bdecode(b"l4:spam4:eggsi341ee").unwrap(),
             Bencodable::List(vec!(
                 Bencodable::from("spam"),
                 Bencodable::from("eggs"),
