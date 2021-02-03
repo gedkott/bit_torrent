@@ -146,7 +146,7 @@ fn generate_peer_threads(
                 if let Ok(mut c) = connect(socket_addr, info_hash, peer_id) {
                     let mut done = false;
                     while !done {
-                        let m = { c.read_message() };
+                        let m = c.read_message();
                         match m {
                             Ok(frame) => {
                                 done = process_frame(Arc::clone(&t), frame, &mut c);
@@ -155,7 +155,8 @@ fn generate_peer_threads(
                                 }
                             }
                             Err(_) => {
-                                break;
+                                done = are_we_done_yet(Arc::clone(&t));
+                                continue;
                             }
                         }
                     }
