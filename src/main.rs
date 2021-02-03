@@ -32,14 +32,23 @@ use bitfield::BitField;
 
 const TORRENT_FILE: &str = "Charlie_Chaplin_Mabels_Strange_Predicament.avi.torrent";
 const CONNECTION_TIMEOUT: Duration = Duration::from_millis(750);
+const READ_TIMEOUT: Duration = Duration::from_millis(750);
 const PROGRESS_TIMER: Duration = Duration::from_secs(15);
+const THREADS_PER_PEER: u8 = 8;
+const BLOCKS_PER_REQUEST: u8 = 5;
+const INFO_HASH_BYTES: usize = 20;
 
 fn connect(
     socket_addr: SocketAddr,
-    info_hash: [u8; 20],
+    info_hash: [u8; INFO_HASH_BYTES],
     peer_id: String,
 ) -> Result<PeerConnection, SendError> {
-    TcpStream::connect_timeout(&socket_addr, CONNECTION_TIMEOUT)
+    let stream = TcpStream::connect_timeout(&socket_addr, CONNECTION_TIMEOUT)
+        .map(|stream| {
+            let _ = stream.set_read_timeout(Some(READ_TIMEOUT));
+            stream
+        });
+    stream
         .map_err(SendError::Connect)
         .and_then(|s| PeerConnection::new(Stream::Tcp(s), &info_hash, peer_id.as_bytes()))
 }
@@ -49,7 +58,7 @@ type Blocks = Vec<Option<(u32, u32, u32)>>;
 fn request_blocks(torrent: Arc<Mutex<Torrent>>, c: &mut PeerConnection) -> bool {
     let bf = c.bitfield.as_ref().unwrap();
     let mut t = torrent.lock().unwrap();
-    let blocks: Blocks = (0..5).map(|_| t.get_next_block(&bf)).collect();
+    let blocks: Blocks = (0..BLOCKS_PER_REQUEST).map(|_| t.get_next_block(&bf)).collect();
     for b in blocks {
         match b {
             Some((index, offset, length)) => {
@@ -125,10 +134,10 @@ fn process_frame(
 fn generate_peer_threads(
     p: Peer,
     peer_id: String,
-    info_hash: [u8; 20],
+    info_hash: [u8; INFO_HASH_BYTES],
     t: Arc<Mutex<Torrent>>,
 ) -> PeerThreads {
-    (0..8)
+    (0..THREADS_PER_PEER)
         .map(|_| {
             let peer_id = peer_id.clone();
             let socket_addr = p.socket_addr;
