@@ -1,8 +1,8 @@
 use crate::bencode::*;
+use crate::PiecedContent;
 use sha1::Sha1;
 use std::fs::File as FsFile;
 use std::io::prelude::*;
-use crate::PiecedContent;
 
 #[derive(Debug)]
 pub struct MetaInfoFile {
@@ -97,7 +97,7 @@ impl<'a> From<&'a Bencodable> for MetaInfoFile {
                         };
 
                         Info {
-                            piece_length: piece_length,
+                            piece_length,
                             pieces,
                             name: name.to_string(),
                             files: Files::File(File {

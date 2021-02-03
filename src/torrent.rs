@@ -14,8 +14,6 @@ pub trait PiecedContent {
 pub struct Torrent {
     total_blocks: u32,
     pieces: Vec<Piece>,
-    piece_length: u32,
-    num_blocks_per_piece: u32,
     file_name: String,
 }
 
@@ -30,10 +28,7 @@ struct Piece {
 pub struct Block {
     data: Option<Vec<u8>>,
     state: BlockState,
-    pub index: u32,
-    pub piece_index: u32,
-    pub offset: u32,
-    pub length: u32,
+    offset: u32,
     last_request: Option<Instant>,
 }
 
@@ -45,12 +40,13 @@ enum BlockState {
 }
 
 const FIXED_BLOCK_SIZE: u32 = 16384;
+const END_GAME_PROGRESS_THRESHOLD: f32 = 92.5;
 
 impl Torrent {
-    pub fn new(meta_info_file: &dyn PiecedContent) -> Self {
-        let number_of_pieces = meta_info_file.number_of_pieces();
-        let piece_length = meta_info_file.piece_length();
-        let total_length = meta_info_file.total_length();
+    pub fn new(pieced_content: &dyn PiecedContent) -> Self {
+        let number_of_pieces = pieced_content.number_of_pieces();
+        let piece_length = pieced_content.piece_length();
+        let total_length = pieced_content.total_length();
 
         let number_of_blocks =
             (piece_length / FIXED_BLOCK_SIZE) + !!(piece_length % FIXED_BLOCK_SIZE);
@@ -60,10 +56,7 @@ impl Torrent {
                 let blocks: Vec<Block> = (0..number_of_blocks)
                     .map(|block_index| Block {
                         state: BlockState::NotRequested,
-                        index: block_index,
-                        piece_index: index,
                         offset: FIXED_BLOCK_SIZE * block_index,
-                        length: FIXED_BLOCK_SIZE,
                         data: None,
                         last_request: None,
                     })
@@ -84,10 +77,7 @@ impl Torrent {
         let last_blocks = (0..last_piece_block_count)
             .map(|block_index| Block {
                 state: BlockState::NotRequested,
-                index: block_index,
-                piece_index: last_piece_index,
                 offset: FIXED_BLOCK_SIZE * block_index,
-                length: FIXED_BLOCK_SIZE,
                 data: None,
                 last_request: None,
             })
@@ -103,14 +93,11 @@ impl Torrent {
 
         Torrent {
             total_blocks,
-            piece_length,
             pieces,
-            num_blocks_per_piece: number_of_blocks,
-            file_name: meta_info_file.name(),
+            file_name: pieced_content.name(),
         }
     }
 
-    // Would an iterator approach speed things up? Can this be opimized in general?
     pub fn get_next_block(&mut self, bitfield: &BitField) -> Option<(u32, u32, u32)> {
         let (progress, _, _, _) = self.progress();
         for p in self.pieces.iter_mut() {
@@ -120,15 +107,14 @@ impl Torrent {
                     match b.state {
                         BlockState::Done => continue,
                         BlockState::Requested => {
-                            if progress > 95.0 {
-                                return Some((b.piece_index, b.offset, b.length));
+                            if progress > END_GAME_PROGRESS_THRESHOLD {
+                                return Some((p.index, b.offset, FIXED_BLOCK_SIZE));
                             }
                             let now = Instant::now();
                             let last = b.last_request.unwrap();
                             if now - last > std::time::Duration::from_secs(15) {
-                                // println!("re-requesting block... diff: {:?}, now: {:?}, last: {:?}", now - last, now, b.last_request);
                                 b.last_request = Some(now);
-                                return Some((b.piece_index, b.offset, b.length));
+                                return Some((p.index, b.offset, FIXED_BLOCK_SIZE));
                             } else {
                                 continue;
                             }
@@ -136,7 +122,7 @@ impl Torrent {
                         BlockState::NotRequested => {
                             b.state = BlockState::Requested;
                             b.last_request = Some(Instant::now());
-                            return Some((b.piece_index, b.offset, b.length));
+                            return Some((p.index, b.offset, FIXED_BLOCK_SIZE));
                         }
                     }
                 }
@@ -179,7 +165,7 @@ impl Torrent {
                         file.write_all(&b).unwrap();
                     }
                     None => {
-                        println!("missing block {:?} of piece {:?}", b.offset, b.piece_index)
+                        println!("missing block {:?} of piece {:?}", b.offset, p.index)
                     }
                 }
             }
@@ -250,7 +236,7 @@ mod tests {
         assert_eq!(8, other.blocks.len());
 
         let last = t.pieces.last().unwrap();
-        let expected_last_length = pieced_content.total_length() % (t.piece_length);
+        let expected_last_length = 49152;
         assert_eq!(last.length, expected_last_length);
 
         assert_eq!(3, last.blocks.len());
