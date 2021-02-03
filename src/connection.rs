@@ -1,5 +1,6 @@
 use crate::messages::*;
 use crate::util;
+use crate::BitField;
 use std::io::prelude::*;
 
 #[derive(Debug)]
@@ -11,6 +12,7 @@ pub enum SendError {
     Connect(std::io::Error),
 }
 
+#[derive(Debug)]
 pub enum Stream {
     Tcp(std::net::TcpStream),
 }
@@ -20,12 +22,13 @@ pub enum StreamType {
 }
 
 pub struct PeerConnection {
-    stream: Stream,
+    pub stream: Stream,
     pub stream_type: StreamType,
-    is_peer_choked: bool,
-    is_local_choked: bool,
-    is_peer_interested: bool,
-    is_local_interested: bool,
+    _is_peer_choked: bool,
+    pub is_local_choked: bool,
+    _is_peer_interested: bool,
+    pub is_local_interested: bool,
+    pub bitfield: Option<BitField>,
 }
 
 impl PeerConnection {
@@ -40,38 +43,26 @@ impl PeerConnection {
         };
         let bytes: Vec<u8> = handshake.serialize();
 
-        println!("writing handshake frame: {:?}", handshake);
-        let write_result = stream.write_all(&bytes).map_err(|e| SendError::Write(e));
+        let write_result = stream.write_all(&bytes).map_err(SendError::Write);
 
         write_result
             .and_then(|_| {
-                // handshake includes reading the return handshake
                 let work = Box::new(move || {
                     let mut buf: Vec<u8> = vec![0; 68];
-                    println!("reading handshake frame");
                     match stream.read_exact(&mut buf) {
-                        Ok(_) => {
-                            println!("succesfully read handshake frame");
-                            Ok((buf, stream))
-                        }
-                        Err(e) => {
-                            println!("failed to read handshake frame");
-                            Err(SendError::ReturnHandshakeRead(e))
-                        }
+                        Ok(_) => Ok((buf, stream)),
+                        Err(e) => Err(SendError::ReturnHandshakeRead(e)),
                     }
                 });
 
-                println!("about to race stream read");
-
-                util::with_timeout(work, std::time::Duration::from_millis(1500)).map_err(|e| {
-                    println!("timeout or execution error {:?}", e);
-                    match e {
+                util::with_timeout(work, std::time::Duration::from_millis(1500)).map_err(
+                    |e| match e {
                         crate::util::ExecutionErr::TimedOut => {
                             SendError::ReturnHandshakeReadTimeOut
                         }
                         crate::util::ExecutionErr::Err(e) => e,
-                    }
-                })
+                    },
+                )
             })
             .and_then(|(buf, stream)| {
                 Handshake::new(&buf)
@@ -82,45 +73,30 @@ impl PeerConnection {
                 stream: s,
                 stream_type,
                 is_local_choked: true,
-                is_peer_choked: true,
+                _is_peer_choked: true,
                 is_local_interested: false,
-                is_peer_interested: false,
+                _is_peer_interested: false,
+                bitfield: None,
             })
     }
 
     pub fn write_message(&mut self, m: Message) -> Result<(), SendError> {
-        match m {
-            _ => {
-                let bytes: Vec<u8> = m.serialize();
+        let bytes: Vec<u8> = m.serialize();
 
-                let write_result = {
-                    println!("writing message: {:?}", m);
-                    self.stream
-                        .write_all(&bytes)
-                        .map_err(|e| SendError::Write(e))
-                };
-
-                write_result
-            }
-        }
+        self.stream.write_all(&bytes).map_err(SendError::Write)
     }
 
     pub fn read_message(&mut self) -> Result<Message, MessageParseError> {
         let mut buf = [0u8; 4].to_vec();
 
-        let read_prefix_len_result = {
-            self.stream
-                .read_exact(&mut buf)
-                .map_err(MessageParseError::PrefixLenRead)
-        };
-
-        read_prefix_len_result
+        self.stream
+            .read_exact(&mut buf)
+            .map_err(MessageParseError::PrefixLenRead)
             .and_then(|_| {
                 let prefix_len = util::read_be_u32(&mut buf.as_slice())
                     .map_err(|_| MessageParseError::PrefixLenConvert)?;
                 let mut message_buf = vec![0u8; prefix_len as usize];
                 if prefix_len == 0 {
-                    // TODO(): keep-alive messages do not need to read bytes before parsing
                     Ok((vec![], 0))
                 } else {
                     self.stream

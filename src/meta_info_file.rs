@@ -1,27 +1,40 @@
 use crate::bencode::*;
 use sha1::Sha1;
+use std::fs::File as FsFile;
+use std::io::prelude::*;
 
 #[derive(Debug)]
 pub struct MetaInfoFile {
     info: Info,
     pub announce: String,
     announce_list: Option<Vec<Vec<String>>>,
-    creation_date: Option<i32>,
+    creation_date: Option<u32>,
     comment: Option<String>,
     created_by: Option<String>,
     encoding: Option<String>,
+    pub info_hash: [u8; 20],
 }
 
 impl MetaInfoFile {
-    pub fn pieces(&self) -> &[String] {
-        &self.info.pieces
+    pub fn file_name(&self) -> String {
+        self.info.name.clone()
+    }
+}
+
+impl crate::PiecedContent for MetaInfoFile {
+    fn number_of_pieces(&self) -> u32 {
+        self.info.pieces.len() as u32
     }
 
-    pub fn piece_length(&self) -> i32 {
+    fn piece_length(&self) -> u32 {
         self.info.piece_length
     }
 
-    pub fn file_length(&self) -> i32 {
+    fn name(&self) -> String {
+        self.file_name()
+    }
+
+    fn total_length(&self) -> u32 {
         match &self.info.files {
             Files::File(f) => f.length,
         }
@@ -30,7 +43,7 @@ impl MetaInfoFile {
 
 #[derive(Debug)]
 struct File {
-    length: i32,
+    length: u32,
     path: String,
 }
 
@@ -41,9 +54,9 @@ enum Files {
 
 #[derive(Debug)]
 pub struct Info {
-    piece_length: i32,
+    piece_length: u32,
     pieces: Vec<String>,
-    private: Option<i32>,
+    private: Option<u32>,
     name: String,
     files: Files,
 }
@@ -80,18 +93,21 @@ impl<'a> From<&'a Bencodable> for MetaInfoFile {
                         };
 
                         let length_key = &BencodableByteString::from("length");
-                        let length = match &btm[length_key] {
-                            Bencodable::Integer(i) => i,
-                            _ => panic!("did not find `length` (expected to find `files` instead)"),
+                        let length = match &btm.get(length_key) {
+                            Some(Bencodable::Integer(i)) => i,
+                            _ => panic!(
+                                "did not find `length` (expected to find `files` instead): {:?}",
+                                b
+                            ),
                         };
 
                         Info {
-                            piece_length,
+                            piece_length: piece_length as u32,
                             pieces,
                             private: None,
                             name: name.to_string(),
                             files: Files::File(File {
-                                length: *length,
+                                length: *length as u32,
                                 path: name.to_string(),
                             }),
                         }
@@ -113,6 +129,24 @@ impl<'a> From<&'a Bencodable> for MetaInfoFile {
             _ => panic!("did not find dictionary for Metainfo file structure"),
         };
 
+        let info_hash = {
+            let info = match &b {
+                Bencodable::Dictionary(btm) => {
+                    let info_key = &BencodableByteString::from("info");
+                    match &btm[info_key] {
+                        Bencodable::Dictionary(btm) => {
+                            bencode(&Bencodable::Dictionary(btm.clone()))
+                        }
+                        _ => panic!("did not find info for info hash"),
+                    }
+                }
+                _ => panic!("did not find dictionary for Metainfo file structure for info hash"),
+            };
+            let mut hasher = Sha1::new();
+            hasher.update(&info.unwrap());
+            hasher.digest().bytes()
+        };
+
         MetaInfoFile {
             info,
             announce: announce.unwrap().to_string(),
@@ -121,6 +155,17 @@ impl<'a> From<&'a Bencodable> for MetaInfoFile {
             comment: None,
             created_by: None,
             encoding: None,
+            info_hash,
         }
+    }
+}
+
+impl From<FsFile> for MetaInfoFile {
+    fn from(mut f: FsFile) -> Self {
+        let mut bytes = Vec::new();
+        f.read_to_end(&mut bytes).unwrap();
+        let bytes_slice = bytes.as_slice();
+        let bencodable = bdecode(bytes_slice).unwrap();
+        MetaInfoFile::from(&bencodable)
     }
 }

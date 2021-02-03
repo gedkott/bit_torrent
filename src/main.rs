@@ -1,8 +1,5 @@
 use std::fs::File;
-use std::io::prelude::*;
 use std::sync::{Arc, Mutex};
-
-use sha1::Sha1;
 
 mod bencode;
 use bencode::*;
@@ -22,8 +19,14 @@ use util::{random_string, AtomicCounter};
 mod connection;
 use connection::*;
 
+mod torrent;
+use torrent::*;
+
+mod bitfield;
+use bitfield::BitField;
+
 const TORRENT_FILE: &str = "Charlie_Chaplin_Mabels_Strange_Predicament.avi.torrent";
-const CONNECTION_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(100);
+const CONNECTION_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(750);
 
 #[derive(Debug)]
 struct Stats {
@@ -32,97 +35,111 @@ struct Stats {
     tcp_peers: AtomicCounter,
 }
 
-fn read_meta_info_file() -> (MetaInfoFile, String, [u8; 20]) {
-    let mut f = File::open(TORRENT_FILE).unwrap();
-    let mut bytes = Vec::new();
-    f.read_to_end(&mut bytes).unwrap();
-    let bytes_slice = bytes.as_slice();
-    let bencodable = bdecode(bytes_slice).unwrap();
-    let meta_info = MetaInfoFile::from(&bencodable);
-
-    let info = match &bencodable {
-        Bencodable::Dictionary(btm) => {
-            let info_key = &BencodableByteString::from("info");
-            match &btm[info_key] {
-                Bencodable::Dictionary(btm) => bencode(&Bencodable::Dictionary(btm.clone())),
-                _ => panic!("did not find info for info hash"),
-            }
-        }
-        _ => panic!("did not find dictionary for Metainfo file structure for info hash"),
-    };
-
-    let info_hash = {
-        let mut hasher = Sha1::new();
-        hasher.update(&info.unwrap());
-        hasher.digest().bytes()
-    };
-
-    let info_encoded =
-        percent_encoding::percent_encode(&info_hash, percent_encoding::NON_ALPHANUMERIC)
-            .to_string();
-
-    (meta_info, info_encoded, info_hash)
+fn connect(
+    socket_addr: std::net::SocketAddr,
+    info_hash: [u8; 20],
+    peer_id: String,
+    stats: Arc<Stats>,
+) -> Result<PeerConnection, SendError> {
+    std::net::TcpStream::connect_timeout(&socket_addr, CONNECTION_TIMEOUT)
+        .map_err(SendError::Connect)
+        .and_then(|s| {
+            stats.tcp_connected.update();
+            stats.tcp_peers.update();
+            PeerConnection::new(Stream::Tcp(s), &info_hash, peer_id.as_bytes())
+        })
 }
 
-fn process_frame(frame: Message, c: &mut PeerConnection) {
+fn request_blocks(torrent: Arc<Mutex<Torrent>>, c: &mut PeerConnection) -> bool {
+    let bf = c.bitfield.as_ref().unwrap();
+    let mut t = torrent.lock().unwrap();
+    let blocks: Vec<Option<(u32, u32, u32)>> = (0..5).map(|_| t.get_next_block(&bf)).collect();
+    for b in blocks {
+        match b {
+            Some((index, offset, length)) => {
+                c.write_message(Message::Request {
+                    index,
+                    begin: offset,
+                    length,
+                })
+                .unwrap();
+            }
+            None => return true,
+        }
+    }
+    false
+}
+
+fn are_we_done_yet(torrent: Arc<Mutex<Torrent>>) -> bool {
+    let t = torrent.lock().unwrap();
+    t.are_we_done_yet()
+}
+
+fn process_frame(
+    torrent: Arc<Mutex<crate::Torrent>>,
+    frame: Message,
+    c: &mut PeerConnection,
+) -> bool {
+    let t = Arc::clone(&torrent);
     match frame {
         Message::KeepAlive => {
-            c.write_message(Message::KeepAlive);
+            c.write_message(Message::KeepAlive).unwrap();
+            request_blocks(torrent, c);
         }
         Message::Choke => (),
         Message::UnChoke => {
-            c.write_message(Message::Request {
-                index: 0,
-                begin: 0,
-                length: 16384,
-            });
+            request_blocks(torrent, c);
         }
         Message::Interested => (),
         Message::NotInterested => (),
-        Message::Have { index } => {
-            c.write_message(Message::Interested);
+        Message::Have { index: _index } => {
+            let is_interested = c.is_local_interested;
+            if !is_interested {
+                c.is_local_interested = true;
+                c.write_message(Message::Interested).unwrap();
+            }
         }
         Message::BitField(bf) => {
-            c.write_message(Message::Interested);
+            println!("bitfield {:?}, len: {:?}", bf, bf.len());
+            let is_interested = c.is_local_interested;
+            if !is_interested {
+                c.is_local_interested = true;
+                c.bitfield = Some(bf.into());
+                c.write_message(Message::Interested).unwrap();
+            }
         }
         Message::Request {
-            index,
-            begin,
-            length,
-        } => {
-            // c.write_message(Message::Interested);
-        }
+            index: _index,
+            begin: _begin,
+            length: _length,
+        } => (),
         Message::Piece {
             index,
             offset,
             data,
         } => {
-            println!(
-                "got piece from index {:?} at offset {:?} for {:?} bytes",
-                index,
-                offset,
-                data.len()
-            )
+            {
+                torrent.lock().unwrap().fill_block((index, offset, &data));
+            }
+            request_blocks(torrent, c);
         }
-    }
+    };
+    are_we_done_yet(t)
 }
 
 fn main() {
-    let (meta_info, info_encoded, info_hash) = read_meta_info_file();
-    println!("torrent has {:?} pieces", meta_info.pieces().len());
-    println!(
-        "torrent pieces are each {:?} bytes",
-        meta_info.piece_length()
-    );
-    println!("torrent file size is {:?} bytes", meta_info.file_length());
-    let peer_id = Arc::new(random_string());
+    let meta_info = MetaInfoFile::from(File::open(TORRENT_FILE).unwrap());
+    let info_encoded =
+        percent_encoding::percent_encode(&meta_info.info_hash, percent_encoding::NON_ALPHANUMERIC)
+            .to_string();
     let stats = Arc::new(Stats {
         from_tracker: AtomicCounter::new(),
         tcp_connected: AtomicCounter::new(),
         tcp_peers: AtomicCounter::new(),
     });
+    let peer_id = random_string();
 
-    if let Some(e) = Tracker::new()
+    let peers = Tracker::new()
         .track(
             &format!(
                 "{}?info_hash={}&peer_id={}",
@@ -140,86 +157,74 @@ fn main() {
             let stats = Arc::clone(&stats);
             resp.map(|tp| {
                 stats.from_tracker.update();
-                match tp {
-                    TrackerPeer::Peer(p) => p,
-                    TrackerPeer::SocketAddr(sa) => {
-                        println!(
-                            "weird peer from tracker with only socket addr, no ID: {:?}",
-                            sa
-                        );
-                        let id = random_string();
-                        tracker::Peer {
-                            id: id.as_bytes().to_vec(),
-                            socket_addr: sa,
-                        }
-                    }
-                }
+                Peer::from(tp)
             })
             .collect()
-        })
-        .map(|peers: Vec<tracker::Peer>| {
-            // in parallel, complete handshake sequence with each peer we connected to successfully
-            let stats = Arc::clone(&stats);
-            println!("kicking off handshaking for everyone");
-            let peer_thread = move |p: tracker::Peer| {
-                let socket_addr = p.socket_addr;
-                let stats = Arc::clone(&stats);
-                let peer_id = Arc::clone(&peer_id);
-                let stats = Arc::clone(&stats);
-                std::thread::spawn(move || {
-                    if let Err(e) =
-                        std::net::TcpStream::connect_timeout(&socket_addr, CONNECTION_TIMEOUT)
-                            .map_err(SendError::Connect)
-                            .and_then(|s| {
-                                stats.tcp_connected.update();
-                                stats.tcp_peers.update();
-                                PeerConnection::new(Stream::Tcp(s), &info_hash, peer_id.as_bytes())
-                            })
-                            .map(|mut c| {
-                                // std::thread::spawn(move || {
-                                loop {
-                                    let r = c.read_message();
-                                    match r {
+        });
+
+    let torrent = Arc::new(Mutex::new(Torrent::new(&meta_info)));
+    if let Ok((jhs, torrent)) = peers.map(|peers: Vec<tracker::Peer>| {
+        let stats = Arc::clone(&stats);
+        let join_handles: Vec<Vec<std::thread::JoinHandle<()>>> = peers
+            .iter()
+            .map(|p| {
+                (0..8)
+                    .map(|_| {
+                        let peer_id = peer_id.clone();
+                        let socket_addr = p.socket_addr;
+                        let stats = Arc::clone(&stats);
+
+                        let stats = Arc::clone(&stats);
+                        let info_hash = meta_info.info_hash;
+                        let t = Arc::clone(&torrent);
+
+                        println!("spawning thread for {:?}", p);
+                        std::thread::spawn(move || {
+                            if let Ok(mut c) = connect(socket_addr, info_hash, peer_id, stats) {
+                                let mut done = false;
+                                while !done {
+                                    let m = { c.read_message() };
+                                    match m {
                                         Ok(frame) => {
-                                            println!(
-                                                "frame: {:?}",
-                                                match &frame {
-                                                    Message::Piece { index, offset, .. } =>
-                                                        format!(
-                                                            "Piece {{ index: {:?}, offset: {:?} }}",
-                                                            index, offset
-                                                        ),
-                                                    frame => format!("{:?}", frame),
-                                                }
-                                            );
-                                            process_frame(frame, &mut c);
+                                            done = process_frame(Arc::clone(&t), frame, &mut c);
+                                            if !done {
+                                                request_blocks(Arc::clone(&t), &mut c);
+                                            }
                                         }
                                         Err(e) => {
-                                            panic!("could not read frame {:?}", e)
+                                            println!("could not read frame {:?}", e);
+                                            break;
                                         }
                                     }
                                 }
-                                // });
-                            })
-                    {
-                        println!("thread spawn went wonky {:?}", e);
-                    }
-                })
-            };
-            peers.into_iter().map(peer_thread)
-        })
-        .map(|jhs| {
-            let stats = Arc::clone(&stats);
-            std::thread::spawn(move || loop {
-                println!("stats: {:?}", stats);
-                std::thread::sleep(std::time::Duration::from_secs(10))
-            });
-            for jh in jhs {
-                jh.join();
+                            }
+                        })
+                    })
+                    .collect()
+            })
+            .collect();
+        (join_handles, torrent)
+    }) {
+        let t = Arc::clone(&torrent);
+        std::thread::spawn(move || loop {
+            std::thread::sleep(std::time::Duration::from_secs(15));
+            let p = { t.lock().unwrap().progress() };
+            println!(
+                "progress: {}, completed: {}, in progress: {}, not requested: {}",
+                p.0, p.1, p.2, p.3
+            );
+        });
+
+        for jh in jhs {
+            for cjh in jh {
+                cjh.join().unwrap();
             }
-        })
-        .err()
-    {
-        println!("Error from tracking: {:#?}", e);
+        }
+
+        let _ = {
+            torrent.lock().unwrap().to_file();
+        };
+    } else {
+        panic!("{:?}",);
     }
 }

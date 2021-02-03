@@ -91,7 +91,7 @@ impl Message {
             } => attach_bytes(&[
                 13u32.to_be_bytes().iter(),
                 6u8.to_be_bytes().iter(),
-                index.to_be_bytes().iter(),
+                (*index as u32).to_be_bytes().iter(),
                 begin.to_be_bytes().iter(),
                 length.to_be_bytes().iter(),
             ]),
@@ -151,12 +151,12 @@ impl Message {
                     let data_block_len = prefix_len - 9;
                     Ok(Message::Piece {
                         index,
-                        offset: offset,
+                        offset,
                         data: bytes.take(data_block_len as usize).collect(),
                     })
                 }
                 // cancel
-                8 => Err(MessageParseError::Unimplemented("8 - request")),
+                8 => Err(MessageParseError::Unimplemented("8 - cancel")),
                 _ => Err(MessageParseError::Id(id)),
             }
         }
