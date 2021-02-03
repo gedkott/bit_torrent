@@ -52,7 +52,7 @@ pub enum MessageParseError {
     Id(u8),
     IdMissing,
     Have,
-    Unimplemented(&'static str), // BitField,
+    Unimplemented(&'static str),
     Piece,
 }
 
@@ -91,7 +91,7 @@ impl Message {
             } => attach_bytes(&[
                 13u32.to_be_bytes().iter(),
                 6u8.to_be_bytes().iter(),
-                (*index as u32).to_be_bytes().iter(),
+                index.to_be_bytes().iter(),
                 begin.to_be_bytes().iter(),
                 length.to_be_bytes().iter(),
             ]),

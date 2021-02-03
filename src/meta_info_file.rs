@@ -2,16 +2,12 @@ use crate::bencode::*;
 use sha1::Sha1;
 use std::fs::File as FsFile;
 use std::io::prelude::*;
+use crate::PiecedContent;
 
 #[derive(Debug)]
 pub struct MetaInfoFile {
     info: Info,
     pub announce: String,
-    announce_list: Option<Vec<Vec<String>>>,
-    creation_date: Option<u32>,
-    comment: Option<String>,
-    created_by: Option<String>,
-    encoding: Option<String>,
     pub info_hash: [u8; 20],
 }
 
@@ -21,7 +17,7 @@ impl MetaInfoFile {
     }
 }
 
-impl crate::PiecedContent for MetaInfoFile {
+impl PiecedContent for MetaInfoFile {
     fn number_of_pieces(&self) -> u32 {
         self.info.pieces.len() as u32
     }
@@ -56,7 +52,6 @@ enum Files {
 pub struct Info {
     piece_length: u32,
     pieces: Vec<String>,
-    private: Option<u32>,
     name: String,
     files: Files,
 }
@@ -102,12 +97,11 @@ impl<'a> From<&'a Bencodable> for MetaInfoFile {
                         };
 
                         Info {
-                            piece_length: piece_length as u32,
+                            piece_length: piece_length,
                             pieces,
-                            private: None,
                             name: name.to_string(),
                             files: Files::File(File {
-                                length: *length as u32,
+                                length: *length,
                                 path: name.to_string(),
                             }),
                         }
@@ -150,11 +144,6 @@ impl<'a> From<&'a Bencodable> for MetaInfoFile {
         MetaInfoFile {
             info,
             announce: announce.unwrap().to_string(),
-            announce_list: None,
-            creation_date: None,
-            comment: None,
-            created_by: None,
-            encoding: None,
             info_hash,
         }
     }

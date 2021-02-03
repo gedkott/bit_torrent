@@ -8,16 +8,6 @@ pub trait PiecedContent {
     fn piece_length(&self) -> u32;
     fn total_length(&self) -> u32;
     fn name(&self) -> String;
-
-    fn debug(&self) -> String {
-        format!(
-            "PiecedContent {{ total length: {}, num pieces: {} , piece len: {}, name: {} }}",
-            self.total_length(),
-            self.number_of_pieces(),
-            self.piece_length(),
-            self.name()
-        )
-    }
 }
 
 #[derive(Debug)]
