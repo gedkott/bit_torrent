@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::Write;
 use std::time::{Duration, Instant};
@@ -20,6 +21,7 @@ pub struct Torrent {
     completed_blocks: u32,
     requested_blocks: u32,
     pub percent_complete: f32,
+    pub repeated_blocks: HashMap<(u32, u32), u32>,
 }
 
 #[derive(Debug)]
@@ -29,7 +31,7 @@ struct Piece {
     length: u32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq, Hash)]
 pub struct Block {
     data: Option<Vec<u8>>,
     state: BlockState,
@@ -37,7 +39,7 @@ pub struct Block {
     last_request: Option<Instant>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq, Hash)]
 enum BlockState {
     NotRequested,
     Requested,
@@ -105,6 +107,7 @@ impl Torrent {
             completed_blocks: 0,
             requested_blocks: 0,
             percent_complete: 0.0,
+            repeated_blocks: HashMap::new(),
         }
     }
 
@@ -161,6 +164,11 @@ impl Torrent {
                             self.completed_blocks += 1;
                             self.percent_complete =
                                 self.completed_blocks as f32 / self.total_blocks as f32;
+                        } else {
+                            self.repeated_blocks
+                                .entry((piece.index, b.offset))
+                                .and_modify(|v| *v += 1)
+                                .or_insert(1);
                         }
                     }
                 }
