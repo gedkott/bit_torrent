@@ -166,20 +166,17 @@ fn generate_peer_threads(
                 if let Ok(mut c) = connect(socket_addr, info_hash, peer_id) {
                     let mut done = false;
                     while !done {
+                        done = are_we_done_yet(Arc::clone(&t));
                         let m = c.read_message();
                         match m {
                             Ok(frame) => {
                                 done = process_frame(Arc::clone(&t), frame, &mut c);
-                                if !done {
-                                    request_blocks(Arc::clone(&t), &mut c);
-                                }
                             }
                             Err(_) => {
-                                done = are_we_done_yet(Arc::clone(&t));
-                                request_blocks(Arc::clone(&t), &mut c);
                                 continue;
                             }
                         }
+                        request_blocks(Arc::clone(&t), &mut c);
                     }
                 }
             })
