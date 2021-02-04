@@ -15,7 +15,11 @@ pub trait PiecedContent {
 pub struct Torrent {
     total_blocks: u32,
     pieces: Vec<Piece>,
+    pub total_pieces: u32,
     file_name: String,
+    completed_blocks: u32,
+    requested_blocks: u32,
+    pub percent_complete: f32,
 }
 
 #[derive(Debug)]
@@ -33,7 +37,7 @@ pub struct Block {
     last_request: Option<Instant>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum BlockState {
     NotRequested,
     Requested,
@@ -42,7 +46,7 @@ enum BlockState {
 
 const FIXED_BLOCK_SIZE: u32 = 16384;
 const END_GAME_PROGRESS_THRESHOLD: f32 = 92.5;
-const REQUEST_TIMER: Duration = Duration::from_secs(10);
+const REQUEST_WAIT_TIME: Duration = Duration::from_secs(15);
 
 impl Torrent {
     pub fn new(pieced_content: &dyn PiecedContent) -> Self {
@@ -96,12 +100,15 @@ impl Torrent {
         Torrent {
             total_blocks,
             pieces,
+            total_pieces: number_of_pieces,
             file_name: pieced_content.name(),
+            completed_blocks: 0,
+            requested_blocks: 0,
+            percent_complete: 0.0,
         }
     }
 
     pub fn get_next_block(&mut self, bitfield: &BitField) -> Option<(u32, u32, u32)> {
-        let (progress, _, _, _) = self.progress();
         for p in self.pieces.iter_mut() {
             // is this piece one that is present in the bitfield?
             if bitfield.is_set(p.index as usize).is_ok() {
@@ -109,12 +116,12 @@ impl Torrent {
                     match b.state {
                         BlockState::Done => continue,
                         BlockState::Requested => {
-                            if progress > END_GAME_PROGRESS_THRESHOLD {
+                            if self.percent_complete > END_GAME_PROGRESS_THRESHOLD {
                                 return Some((p.index, b.offset, FIXED_BLOCK_SIZE));
                             }
                             let now = Instant::now();
                             let last = b.last_request.unwrap();
-                            if now - last > REQUEST_TIMER {
+                            if now - last > REQUEST_WAIT_TIME {
                                 b.last_request = Some(now);
                                 return Some((p.index, b.offset, FIXED_BLOCK_SIZE));
                             } else {
@@ -124,6 +131,7 @@ impl Torrent {
                         BlockState::NotRequested => {
                             b.state = BlockState::Requested;
                             b.last_request = Some(Instant::now());
+                            self.requested_blocks += 1;
                             return Some((p.index, b.offset, FIXED_BLOCK_SIZE));
                         }
                     }
@@ -147,8 +155,13 @@ impl Torrent {
                 match b {
                     None => {}
                     Some(b) => {
-                        b.state = BlockState::Done;
-                        b.data = Some(data.to_vec());
+                        if b.state != BlockState::Done {
+                            b.state = BlockState::Done;
+                            b.data = Some(data.to_vec());
+                            self.completed_blocks += 1;
+                            self.percent_complete =
+                                self.completed_blocks as f32 / self.total_blocks as f32;
+                        }
                     }
                 }
             }
@@ -163,7 +176,7 @@ impl Torrent {
                 let bytes = b.data.as_ref();
                 match bytes {
                     Some(b) => {
-                        file.write_all(&b).unwrap();
+                        file.write_all(b).unwrap();
                     }
                     None => {
                         println!("missing block {:?} of piece {:?}", b.offset, p.index)
@@ -175,34 +188,7 @@ impl Torrent {
     }
 
     pub fn are_we_done_yet(&self) -> bool {
-        let mut completed = 0;
-        for p in &self.pieces {
-            for b in &p.blocks {
-                match b.state {
-                    BlockState::Done => completed += 1,
-                    BlockState::Requested => return false,
-                    BlockState::NotRequested => return false,
-                }
-            }
-        }
-        completed == self.total_blocks
-    }
-
-    pub fn progress(&self) -> (f32, u32, u32, u32) {
-        let mut completed = 0;
-        let mut requested = 0;
-        let mut not_requested = 0;
-        for p in &self.pieces {
-            for b in &p.blocks {
-                match b.state {
-                    BlockState::Done => completed += 1,
-                    BlockState::Requested => requested += 1,
-                    BlockState::NotRequested => not_requested += 1,
-                }
-            }
-        }
-        let percent_complete = completed as f32 / self.total_blocks as f32;
-        (percent_complete, completed, requested, not_requested)
+        self.completed_blocks == self.total_blocks
     }
 }
 

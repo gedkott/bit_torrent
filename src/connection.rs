@@ -24,6 +24,7 @@ pub enum Stream {
 pub struct PeerConnection {
     stream: Stream,
     pub is_local_interested: bool,
+    pub is_choked: bool,
     pub bitfield: Option<BitField>,
 }
 
@@ -62,6 +63,7 @@ impl PeerConnection {
             .map(|s| PeerConnection {
                 stream: s,
                 is_local_interested: false,
+                is_choked: true,
                 bitfield: None,
             })
     }
