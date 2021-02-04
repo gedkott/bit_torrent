@@ -1,6 +1,7 @@
 use rand::Rng;
 use std::convert::TryInto;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc::channel;
+use std::thread;
 
 pub fn read_be_u32(input: &mut &[u8]) -> Result<u32, std::array::TryFromSliceError> {
     let (int_bytes, rest) = input.split_at(std::mem::size_of::<u32>());
@@ -15,9 +16,6 @@ pub fn attach_bytes(bytes: &[std::slice::Iter<'_, u8>]) -> Vec<u8> {
 pub fn random_string() -> String {
     rand::thread_rng().gen_ascii_chars().take(20).collect()
 }
-
-use std::sync::mpsc::channel;
-use std::thread;
 
 #[derive(Debug)]
 pub enum ExecutionErr<E> {
@@ -34,12 +32,12 @@ where
 {
     let (sender, receiver) = channel();
 
-    let work = move || -> () {
+    let work = move || {
         let r = match f() {
             Ok(t) => Ok(t),
             Err(e) => Err(ExecutionErr::Err(e)),
         };
-        sender.send(r);
+        let _ = sender.send(r);
     };
 
     thread::spawn(work);
@@ -50,23 +48,5 @@ where
     {
         Ok(r) => r,
         Err(e) => Err(e),
-    }
-}
-
-#[derive(Debug)]
-pub struct AtomicCounter {
-    count: AtomicUsize,
-}
-
-impl AtomicCounter {
-    pub fn new() -> Self {
-        AtomicCounter {
-            count: AtomicUsize::new(0),
-        }
-    }
-
-    pub fn update(&self) {
-        self.count
-            .store(self.count.load(Ordering::SeqCst) + 1, Ordering::SeqCst);
     }
 }

@@ -1,4 +1,5 @@
 use crate::bencode;
+use crate::util::random_string;
 use reqwest::blocking::Response;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
@@ -21,6 +22,21 @@ pub enum TrackerPeer {
 
 pub trait TrackerResponse<'a> {
     fn peers(self) -> &'a mut dyn Iterator<Item = TrackerPeer>;
+}
+
+impl From<TrackerPeer> for Peer {
+    fn from(tp: TrackerPeer) -> Self {
+        match tp {
+            TrackerPeer::Peer(p) => p,
+            TrackerPeer::SocketAddr(sa) => {
+                let id = random_string();
+                Peer {
+                    id: id.as_bytes().to_vec(),
+                    socket_addr: sa,
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug)]

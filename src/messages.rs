@@ -52,7 +52,7 @@ pub enum MessageParseError {
     Id(u8),
     IdMissing,
     Have,
-    Unimplemented(&'static str), // BitField,
+    Unimplemented(&'static str),
     Piece,
 }
 
@@ -151,12 +151,12 @@ impl Message {
                     let data_block_len = prefix_len - 9;
                     Ok(Message::Piece {
                         index,
-                        offset: offset,
+                        offset,
                         data: bytes.take(data_block_len as usize).collect(),
                     })
                 }
                 // cancel
-                8 => Err(MessageParseError::Unimplemented("8 - request")),
+                8 => Err(MessageParseError::Unimplemented("8 - cancel")),
                 _ => Err(MessageParseError::Id(id)),
             }
         }
