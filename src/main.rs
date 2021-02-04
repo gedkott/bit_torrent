@@ -43,11 +43,10 @@ fn connect(
     info_hash: [u8; INFO_HASH_BYTES],
     peer_id: String,
 ) -> Result<PeerConnection, SendError> {
-    let stream = TcpStream::connect_timeout(&socket_addr, CONNECTION_TIMEOUT)
-        .map(|stream| {
-            let _ = stream.set_read_timeout(Some(READ_TIMEOUT));
-            stream
-        });
+    let stream = TcpStream::connect_timeout(&socket_addr, CONNECTION_TIMEOUT).map(|stream| {
+        let _ = stream.set_read_timeout(Some(READ_TIMEOUT));
+        stream
+    });
     stream
         .map_err(SendError::Connect)
         .and_then(|s| PeerConnection::new(Stream::Tcp(s), &info_hash, peer_id.as_bytes()))
@@ -58,7 +57,9 @@ type Blocks = Vec<Option<(u32, u32, u32)>>;
 fn request_blocks(torrent: Arc<Mutex<Torrent>>, c: &mut PeerConnection) -> bool {
     let bf = c.bitfield.as_ref().unwrap();
     let mut t = torrent.lock().unwrap();
-    let blocks: Blocks = (0..BLOCKS_PER_REQUEST).map(|_| t.get_next_block(&bf)).collect();
+    let blocks: Blocks = (0..BLOCKS_PER_REQUEST)
+        .map(|_| t.get_next_block(&bf))
+        .collect();
     for b in blocks {
         match b {
             Some((index, offset, length)) => {

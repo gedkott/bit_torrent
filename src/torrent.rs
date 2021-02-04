@@ -1,7 +1,8 @@
-use crate::BitField;
+use std::fs::File;
 use std::io::Write;
+use std::time::{Duration, Instant};
 
-use std::time::Instant;
+use crate::BitField;
 
 pub trait PiecedContent {
     fn number_of_pieces(&self) -> u32;
@@ -41,6 +42,7 @@ enum BlockState {
 
 const FIXED_BLOCK_SIZE: u32 = 16384;
 const END_GAME_PROGRESS_THRESHOLD: f32 = 92.5;
+const REQUEST_TIMER: Duration = Duration::from_secs(10);
 
 impl Torrent {
     pub fn new(pieced_content: &dyn PiecedContent) -> Self {
@@ -112,7 +114,7 @@ impl Torrent {
                             }
                             let now = Instant::now();
                             let last = b.last_request.unwrap();
-                            if now - last > std::time::Duration::from_secs(15) {
+                            if now - last > REQUEST_TIMER {
                                 b.last_request = Some(now);
                                 return Some((p.index, b.offset, FIXED_BLOCK_SIZE));
                             } else {
@@ -153,9 +155,9 @@ impl Torrent {
         }
     }
 
-    pub fn to_file(&self) -> std::fs::File {
+    pub fn to_file(&self) -> File {
         let file_name = &self.file_name;
-        let mut file = std::fs::File::create(file_name).unwrap();
+        let mut file = File::create(file_name).unwrap();
         for p in &self.pieces {
             for b in &p.blocks {
                 let bytes = b.data.as_ref();
