@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::net::{SocketAddr, TcpStream};
+use std::net::TcpStream;
 use std::sync::{Arc, RwLock};
 use std::thread::{sleep, spawn, JoinHandle};
 use std::time::Duration;
@@ -39,17 +39,17 @@ const BLOCKS_PER_REQUEST: u8 = 5;
 const INFO_HASH_BYTES: usize = 20;
 
 fn connect(
-    socket_addr: SocketAddr,
+    peer: Arc<Peer>,
     info_hash: [u8; INFO_HASH_BYTES],
-    peer_id: String,
+    my_peer_id: String,
 ) -> Result<PeerConnection, SendError> {
-    let stream = TcpStream::connect_timeout(&socket_addr, CONNECTION_TIMEOUT).map(|stream| {
+    let stream = TcpStream::connect_timeout(&peer.socket_addr, CONNECTION_TIMEOUT).map(|stream| {
         let _ = stream.set_read_timeout(Some(READ_TIMEOUT));
         stream
     });
-    stream
-        .map_err(SendError::Connect)
-        .and_then(|s| PeerConnection::new(Stream::Tcp(s), &info_hash, peer_id.as_bytes()))
+    stream.map_err(SendError::Connect).and_then(|s| {
+        PeerConnection::new(Stream::Tcp(s), &info_hash, my_peer_id.as_bytes(), &peer.id)
+    })
 }
 
 type Blocks = Vec<Option<(u32, u32, u32)>>;
@@ -152,18 +152,18 @@ fn process_frame(
 }
 
 fn generate_peer_threads(
-    p: Peer,
+    p: Arc<Peer>,
     peer_id: String,
     info_hash: [u8; INFO_HASH_BYTES],
     t: Arc<RwLock<Torrent>>,
 ) -> PeerThreads {
     (0..THREADS_PER_PEER)
         .map(|_| {
-            let peer_id = peer_id.clone();
-            let socket_addr = p.socket_addr;
+            let my_peer_id = peer_id.clone();
             let t = Arc::clone(&t);
-            spawn(move || {
-                if let Ok(mut c) = connect(socket_addr, info_hash, peer_id) {
+            let p = Arc::clone(&p);
+            spawn(move || match connect(p, info_hash, my_peer_id) {
+                Ok(mut c) => {
                     let mut done = false;
                     while !done {
                         done = are_we_done_yet(Arc::clone(&t));
@@ -179,6 +179,7 @@ fn generate_peer_threads(
                         request_blocks(Arc::clone(&t), &mut c);
                     }
                 }
+                Err(e) => println!("connection err: {:?}", e),
             })
         })
         .collect::<Vec<JoinHandle<()>>>()
@@ -215,7 +216,7 @@ fn main() {
             .map(|p| {
                 let peer_id = peer_id.clone();
                 let t = Arc::clone(&torrent);
-                generate_peer_threads(p, peer_id, meta_info.info_hash, t)
+                generate_peer_threads(Arc::new(p), peer_id, meta_info.info_hash, t)
             })
             .collect();
         (join_handles, torrent)
