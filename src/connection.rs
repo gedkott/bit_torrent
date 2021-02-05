@@ -14,6 +14,7 @@ pub enum SendError {
     ReturnHandshakeRead(IOError),
     ReturnHandshakeReadTimeOut,
     Connect(IOError),
+    UnexpectedInfoHashOrPeerId,
 }
 
 #[derive(Debug)]
@@ -31,7 +32,12 @@ pub struct PeerConnection {
 const HANDSHAKE_READ_TIMEOUT: Duration = Duration::from_millis(1500);
 
 impl PeerConnection {
-    pub fn new(mut stream: Stream, info_hash: &[u8], my_peer_id: &[u8]) -> Result<Self, SendError> {
+    pub fn new(
+        mut stream: Stream,
+        info_hash: &[u8],
+        my_peer_id: &[u8],
+        peer_id: &[u8],
+    ) -> Result<Self, SendError> {
         let handshake = Handshake {
             info_hash: info_hash.to_vec(),
             peer_id: my_peer_id.to_vec(),
@@ -58,7 +64,14 @@ impl PeerConnection {
             .and_then(|(buf, stream)| {
                 Handshake::new(&buf)
                     .map_err(|_| SendError::HandshakeParse)
-                    .map(|_| stream)
+                    .and_then(|return_handshake| {
+                        if handshake.info_hash == return_handshake.info_hash && return_handshake.peer_id == peer_id {
+                            Ok(stream)
+                        } else {
+                            println!("outgoing handshake: {:?}\nincoming handshake: {:?}\nexpected peer id: {:?}", handshake, return_handshake, peer_id);
+                            Err(SendError::UnexpectedInfoHashOrPeerId)
+                        }
+                    })
             })
             .map(|s| PeerConnection {
                 stream: s,
