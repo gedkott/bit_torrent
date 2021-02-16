@@ -224,8 +224,9 @@ fn main() {
         let t = Arc::clone(&torrent);
         spawn(move || loop {
             sleep(PROGRESS_WAIT_TIME);
-            let percent_complete = t.read().unwrap().percent_complete;
-            println!("percent complete: {}", percent_complete);
+            let t = t.read().unwrap();
+            println!("percent complete: {}", t.percent_complete);
+            println!("repeated completed blocks: {:?}", t.repeated_blocks);
         });
 
         for jh in jhs {
@@ -234,7 +235,7 @@ fn main() {
             }
         }
 
-        let _ = torrent.write().unwrap().to_file();
+        let _ = torrent.read().unwrap().to_file();
     } else {
         panic!("{:?}",);
     }
