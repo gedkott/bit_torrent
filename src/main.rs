@@ -235,7 +235,7 @@ fn main() {
             }
         }
 
-        let _ = torrent.write().unwrap().to_file();
+        let _ = torrent.read().unwrap().to_file();
     } else {
         panic!("{:?}",);
     }
