@@ -21,7 +21,6 @@ pub enum HandshakeParseError {
     PeerId,
 }
 
-#[derive(Debug)]
 pub enum Message {
     KeepAlive,
     Choke,
@@ -44,8 +43,55 @@ pub enum Message {
     },
 }
 
+impl std::fmt::Display for Message {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Message::KeepAlive => {
+                write!(f, "KeepAlive")
+            }
+            Message::Choke => {
+                write!(f, "Choke")
+            }
+            Message::UnChoke => {
+                write!(f, "UnChoke")
+            }
+            Message::Interested => {
+                write!(f, "Interested")
+            }
+            Message::NotInterested => {
+                write!(f, "NotIntereseted")
+            }
+            Message::Have { index } => {
+                write!(f, "Have {{ {} }}", index)
+            }
+            Message::BitField(_bf) => {
+                write!(f, "BitField")
+            }
+            Message::Request {
+                index,
+                begin,
+                length,
+            } => {
+                write!(
+                    f,
+                    "Request {{ index: {}, begin: {}, length: {} }}",
+                    index, begin, length
+                )
+            }
+            Message::Piece {
+                index,
+                offset,
+                data: _data,
+            } => {
+                write!(f, "Piece {{ index: {}, offset: {} }}", index, offset)
+            }
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum MessageParseError {
+    WildWildWest,
     MessageRead,
     PrefixLenRead(std::io::Error),
     PrefixLenConvert,
@@ -54,6 +100,14 @@ pub enum MessageParseError {
     Have,
     Unimplemented(&'static str),
     Piece,
+    ConnectionRefused,
+    ConnectionReset,
+    ConnectionAborted,
+    WouldBlock,
+    TimedOut,
+    WriteZero,
+    Interrupted,
+    UnexpectedEof
 }
 
 impl Message {
