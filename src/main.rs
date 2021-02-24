@@ -38,7 +38,7 @@ const CONNECTION_TIMEOUT: Duration = Duration::from_millis(750);
 const READ_TIMEOUT: Duration = Duration::from_millis(2000);
 const PROGRESS_WAIT_TIME: Duration = Duration::from_secs(15);
 const THREADS_PER_PEER: u8 = 1;
-const BLOCKS_PER_REQUEST: u8 = 5;
+const MAX_IN_PROGRESS_REQUESTS_PER_CONNECTION: usize = 30;
 
 type TrackerPeerResponse = Box<dyn Iterator<Item = TrackerPeer>>;
 type PeerThreads = Vec<JoinHandle<()>>;
@@ -95,11 +95,7 @@ impl TorrentProcessor {
         if let Ok((jhs, torrent)) = peers.map(|peers: Vec<Peer>| {
             let join_handles: Vec<PeerThreads> = peers
                 .into_iter()
-                .map(|p| {
-                    self.generate_peer_threads(
-                        Arc::new(p),
-                    )
-                })
+                .map(|p| self.generate_peer_threads(Arc::new(p)))
                 .collect();
             (join_handles, &self.torrent)
         }) {
@@ -123,10 +119,7 @@ impl TorrentProcessor {
         }
     }
 
-    fn generate_peer_threads(
-        &self,
-        peer: Arc<Peer>,
-    ) -> PeerThreads {
+    fn generate_peer_threads(&self, peer: Arc<Peer>) -> PeerThreads {
         (0..THREADS_PER_PEER)
             .filter_map(|_| {
                 let torrent = Arc::clone(&self.torrent);
@@ -150,24 +143,25 @@ impl TorrentProcessor {
                                     match e {
                                         MessageParseError::ConnectionRefused => {
                                             done = true;
+                                            continue;
                                         },
                                         MessageParseError::ConnectionReset => {
                                             done = true;
+                                            continue;
                                         },
                                         MessageParseError::ConnectionAborted => {
                                             done = true;
+                                            continue;
                                         },
                                         MessageParseError::WouldBlock => {
-                                            
                                         },
                                         MessageParseError::TimedOut => {
-                                            
                                         },
                                         _ => {
                                             done = true;
+                                            continue;
                                         },
                                     }
-                                    continue;
                                 }
                             }
                             done = torrent.read().unwrap().are_we_done_yet();
@@ -186,16 +180,19 @@ impl TorrentProcessor {
             .collect::<Vec<JoinHandle<()>>>()
     }
 
-    fn connect(
-        &self,
-        peer: Arc<Peer>,
-    ) -> Result<PeerConnection, SendError> {
-        let stream = TcpStream::connect_timeout(&peer.socket_addr, CONNECTION_TIMEOUT).map(|stream| {
-            let _ = stream.set_read_timeout(Some(READ_TIMEOUT));
-            stream
-        });
+    fn connect(&self, peer: Arc<Peer>) -> Result<PeerConnection, SendError> {
+        let stream =
+            TcpStream::connect_timeout(&peer.socket_addr, CONNECTION_TIMEOUT).map(|stream| {
+                let _ = stream.set_read_timeout(Some(READ_TIMEOUT));
+                stream
+            });
         stream.map_err(SendError::Connect).and_then(|s| {
-            PeerConnection::new(Stream::Tcp(s), &self.meta_info.info_hash, self.local_peer_id.as_bytes(), &peer.id)
+            PeerConnection::new(
+                Stream::Tcp(s),
+                &self.meta_info.info_hash,
+                self.local_peer_id.as_bytes(),
+                &peer.id,
+            )
         })
     }
 }
@@ -203,10 +200,15 @@ impl TorrentProcessor {
 fn request_blocks(torrent: Arc<RwLock<Torrent>>, connection: &mut PeerConnection) {
     if !connection.is_choked {
         let bf = connection.bitfield.as_ref().unwrap();
+        let in_progress = connection.in_progress_requests;
+        let to_request = MAX_IN_PROGRESS_REQUESTS_PER_CONNECTION - in_progress;
+        connection.in_progress_requests += to_request;
+        println!(
+            "connection to {} has {} in progress, requesting {} more to result in {} in progress requests",
+            connection.peer_addr, in_progress, to_request, connection.in_progress_requests
+        );
         let mut t = torrent.write().unwrap();
-        let blocks: Blocks = (0..BLOCKS_PER_REQUEST)
-            .map(|_| t.get_next_block(&bf))
-            .collect();
+        let blocks: Blocks = (0..to_request).map(|_| t.get_next_block(&bf)).collect();
         for b in blocks {
             match b {
                 Some((index, offset, length)) => {
@@ -279,6 +281,7 @@ fn process_message(
         } => {
             if !data.is_empty() {
                 torrent.write().unwrap().fill_block((index, offset, &data));
+                connection.in_progress_requests -= 1;
                 request_blocks(torrent, connection);
                 MessageResult::Ok
             } else {

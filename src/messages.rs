@@ -93,7 +93,6 @@ impl std::fmt::Display for Message {
 pub enum MessageParseError {
     WildWildWest,
     MessageRead,
-    PrefixLenRead(std::io::Error),
     PrefixLenConvert,
     Id(u8),
     IdMissing,
@@ -107,7 +106,7 @@ pub enum MessageParseError {
     TimedOut,
     WriteZero,
     Interrupted,
-    UnexpectedEof
+    UnexpectedEof,
 }
 
 impl Message {
