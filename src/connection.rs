@@ -27,6 +27,9 @@ pub struct PeerConnection {
     pub is_local_interested: bool,
     pub is_choked: bool,
     pub bitfield: Option<BitField>,
+    pub peer_addr: std::net::SocketAddr,
+    pub local_addr: std::net::SocketAddr,
+    pub in_progress_requests: usize,
 }
 
 const HANDSHAKE_READ_TIMEOUT: Duration = Duration::from_millis(1500);
@@ -73,11 +76,22 @@ impl PeerConnection {
                         }
                     })
             })
-            .map(|s| PeerConnection {
-                stream: s,
-                is_local_interested: false,
-                is_choked: true,
-                bitfield: None,
+            .map(|s| {
+                let peer_addr = match &s {
+                    Stream::Tcp(tcps) => tcps.peer_addr().unwrap()
+                };
+                let local_addr = match &s {
+                    Stream::Tcp(tcps) => tcps.local_addr().unwrap()
+                };
+                PeerConnection {
+                    stream: s,
+                    is_local_interested: false,
+                    is_choked: true,
+                    bitfield: None,
+                    peer_addr,
+                    local_addr,
+                    in_progress_requests: 0
+                }
             })
     }
 
@@ -92,7 +106,17 @@ impl PeerConnection {
 
         self.stream
             .read_exact(&mut buf)
-            .map_err(MessageParseError::PrefixLenRead)
+            .map_err(|e| match e.kind() {
+                std::io::ErrorKind::ConnectionRefused => MessageParseError::ConnectionRefused,
+                std::io::ErrorKind::ConnectionReset => MessageParseError::ConnectionReset,
+                std::io::ErrorKind::ConnectionAborted => MessageParseError::ConnectionAborted,
+                std::io::ErrorKind::WouldBlock => MessageParseError::WouldBlock,
+                std::io::ErrorKind::TimedOut => MessageParseError::TimedOut,
+                std::io::ErrorKind::WriteZero => MessageParseError::WriteZero,
+                std::io::ErrorKind::Interrupted => MessageParseError::Interrupted,
+                std::io::ErrorKind::UnexpectedEof => MessageParseError::UnexpectedEof,
+                _ => MessageParseError::WildWildWest,
+            })
             .and_then(|_| {
                 let prefix_len = util::read_be_u32(&mut buf.as_slice())
                     .map_err(|_| MessageParseError::PrefixLenConvert)?;
