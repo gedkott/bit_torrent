@@ -43,7 +43,7 @@ impl From<TrackerPeer> for Peer {
 pub enum TrackerResponseError {
     BdecodeFailure(bencode::BencodeParseError),
     NoPeerKey,
-    HTTPError(reqwest::Error),
+    HttpError(reqwest::Error),
     UnexpectedBencodable(bencode::Bencodable),
     MisalignedPeers,
     NoPeerByteString {
@@ -180,13 +180,13 @@ impl Tracker {
             .query(&[("downloaded", trp.downloaded)])
             .query(&[("left", trp.left)])
             .build()
-            .map_err(TrackerResponseError::HTTPError)?;
+            .map_err(TrackerResponseError::HttpError)?;
 
         self.client
             .execute(request)
-            .map_err(TrackerResponseError::HTTPError)
+            .map_err(TrackerResponseError::HttpError)
             .and_then(|r: Response| {
-                let bytes = r.bytes().map_err(TrackerResponseError::HTTPError)?;
+                let bytes = r.bytes().map_err(TrackerResponseError::HttpError)?;
                 bencode::bdecode(&*bytes).map_err(TrackerResponseError::BdecodeFailure)
             })
             .and_then(|bencodable| match bencodable {

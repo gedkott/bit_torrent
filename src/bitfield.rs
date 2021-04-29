@@ -1,7 +1,6 @@
 #[derive(Debug)]
 pub struct BitField {
     bf: Vec<u8>,
-    len: usize,
 }
 
 #[derive(Debug, PartialEq)]
@@ -25,8 +24,7 @@ impl BitField {
 
 impl From<Vec<u8>> for BitField {
     fn from(bf: Vec<u8>) -> BitField {
-        let len = bf.len();
-        BitField { bf, len }
+        BitField { bf }
     }
 }
 

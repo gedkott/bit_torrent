@@ -34,15 +34,15 @@ mod logger;
 use logger::Logger;
 
 const TORRENT_FILE: &str = "Charlie_Chaplin_Mabels_Strange_Predicament.avi.torrent";
-const CONNECTION_TIMEOUT: Duration = Duration::from_millis(750);
-const READ_TIMEOUT: Duration = Duration::from_millis(2000);
-const PROGRESS_WAIT_TIME: Duration = Duration::from_secs(15);
+const CONNECTION_TIMEOUT: Duration = Duration::from_millis(250);
+const READ_TIMEOUT: Duration = Duration::from_millis(1000);
+const PROGRESS_WAIT_TIME: Duration = Duration::from_secs(10);
 const THREADS_PER_PEER: u8 = 1;
-const MAX_IN_PROGRESS_REQUESTS_PER_CONNECTION: usize = 30;
+const MAX_IN_PROGRESS_REQUESTS_PER_CONNECTION: usize = 128;
 
 type TrackerPeerResponse = Box<dyn Iterator<Item = TrackerPeer>>;
 type PeerThreads = Vec<JoinHandle<()>>;
-type Blocks = Vec<Option<(u32, u32, u32)>>;
+type Blocks = Vec<Option<PieceIndexOffsetLength>>;
 
 #[derive(PartialEq, Debug)]
 enum MessageResult {
@@ -64,7 +64,8 @@ impl TorrentProcessor {
         let meta_info = MetaInfoFile::from(File::open(torrent_file_path).unwrap());
         let local_peer_id = random_string();
         let logger = Arc::new(RwLock::new(Logger::new(log_file_path)));
-        let torrent = Arc::new(RwLock::new(Torrent::new(&meta_info)));
+        let torrent = Torrent::new(&meta_info);
+        let torrent = Arc::new(RwLock::new(torrent));
 
         TorrentProcessor {
             logger,
@@ -92,30 +93,31 @@ impl TorrentProcessor {
             )
             .map(|resp: TrackerPeerResponse| resp.map(Peer::from).collect());
 
-        if let Ok((jhs, torrent)) = peers.map(|peers: Vec<Peer>| {
+        match peers.map(|peers: Vec<Peer>| {
             let join_handles: Vec<PeerThreads> = peers
                 .into_iter()
                 .map(|p| self.generate_peer_threads(Arc::new(p)))
                 .collect();
             (join_handles, &self.torrent)
         }) {
-            let t = Arc::clone(&torrent);
-            spawn(move || loop {
-                sleep(PROGRESS_WAIT_TIME);
-                let t = t.read().unwrap();
-                println!("percent complete: {}", t.percent_complete);
-                println!("repeated completed blocks: {:?}", t.repeated_blocks);
-            });
+            Ok((jhs, torrent)) => {
+                let t = Arc::clone(&torrent);
+                spawn(move || loop {
+                    sleep(PROGRESS_WAIT_TIME);
+                    let t = t.read().unwrap();
+                    println!("percent complete: {}", t.percent_complete);
+                    println!("repeated completed blocks: {:?}", t.repeated_blocks);
+                });
 
-            for jh in jhs {
-                for cjh in jh {
-                    cjh.join().unwrap();
+                for jh in jhs {
+                    for cjh in jh {
+                        cjh.join().unwrap();
+                    }
                 }
-            }
 
-            let _ = torrent.read().unwrap().to_file();
-        } else {
-            panic!("{:?}",);
+                let _ = torrent.read().unwrap().to_file();
+            }
+            Err(e) => panic!("{:?}", e),
         }
     }
 
@@ -139,7 +141,6 @@ impl TorrentProcessor {
                                     }
                                 }
                                 Err(e) => {
-                                    println!("reading a message failed {:?}", e);
                                     match e {
                                         MessageParseError::ConnectionRefused => {
                                             done = true;
@@ -166,6 +167,7 @@ impl TorrentProcessor {
                             }
                             done = torrent.read().unwrap().are_we_done_yet();
                         }
+                        println!("a connection has finally exited on its own... still being awaited by main potentially....");
                 };
                 match connection {
                     Ok(connection) => {
@@ -203,15 +205,11 @@ fn request_blocks(torrent: Arc<RwLock<Torrent>>, connection: &mut PeerConnection
         let in_progress = connection.in_progress_requests;
         let to_request = MAX_IN_PROGRESS_REQUESTS_PER_CONNECTION - in_progress;
         connection.in_progress_requests += to_request;
-        println!(
-            "connection to {} has {} in progress, requesting {} more to result in {} in progress requests",
-            connection.peer_addr, in_progress, to_request, connection.in_progress_requests
-        );
         let mut t = torrent.write().unwrap();
         let blocks: Blocks = (0..to_request).map(|_| t.get_next_block(&bf)).collect();
         for b in blocks {
             match b {
-                Some((index, offset, length)) => {
+                Some(PieceIndexOffsetLength(index, offset, length)) => {
                     let message = Message::Request {
                         index,
                         begin: offset,
@@ -219,9 +217,7 @@ fn request_blocks(torrent: Arc<RwLock<Torrent>>, connection: &mut PeerConnection
                     };
                     connection.write_message(message).unwrap();
                 }
-                None => {
-                    println!("in request blocks, no more blocks, this means everything has been requested at this point and has not hit the timeout");
-                }
+                None => {}
             }
         }
     }
