@@ -37,7 +37,7 @@ const TORRENT_FILE: &str = "Charlie_Chaplin_Mabels_Strange_Predicament.avi.torre
 const CONNECTION_TIMEOUT: Duration = Duration::from_millis(250);
 const READ_TIMEOUT: Duration = Duration::from_millis(1000);
 const PROGRESS_WAIT_TIME: Duration = Duration::from_secs(10);
-const THREADS_PER_PEER: u8 = 4;
+const THREADS_PER_PEER: u8 = 1;
 const MAX_IN_PROGRESS_REQUESTS_PER_CONNECTION: usize = 128;
 
 type TrackerPeerResponse = Box<dyn Iterator<Item = TrackerPeer>>;

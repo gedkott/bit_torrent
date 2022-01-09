@@ -230,18 +230,18 @@ impl Torrent {
                                 file.write_all(b).unwrap();
                             }
                             None => {
-                                println!(
-                                    "missing block {:?} of piece {:?}",
-                                    b.offset, b.piece_index
-                                )
+                                // println!(
+                                //     "missing block {:?} of piece {:?}",
+                                //     b.offset, b.piece_index
+                                // )
                             }
                         }
                     }
                     None => {
-                        println!(
-                            "missing block index {:?} of piece {:?}",
-                            block_index, piece_index
-                        )
+                        // println!(
+                        //     "missing block index {:?} of piece {:?}",
+                        //     block_index, piece_index
+                        // )
                     }
                 }
             }
