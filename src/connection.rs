@@ -4,6 +4,7 @@ use crate::util::ExecutionErr;
 use crate::BitField;
 use std::io::prelude::*;
 use std::io::Error as IOError;
+use std::net::SocketAddr;
 use std::net::TcpStream;
 use std::time::Duration;
 
@@ -22,7 +23,7 @@ pub enum Stream {
     Tcp(TcpStream),
 }
 
-pub struct PeerConnection {
+pub struct PeerConnection  {
     stream: Stream,
     pub is_local_interested: bool,
     pub is_choked: bool,
@@ -30,6 +31,7 @@ pub struct PeerConnection {
     pub peer_addr: std::net::SocketAddr,
     pub local_addr: std::net::SocketAddr,
     pub in_progress_requests: usize,
+    on_read: Box<dyn Fn((crate::Message, SocketAddr, SocketAddr), &[u8]) -> () + 'static  + Send>
 }
 
 const HANDSHAKE_READ_TIMEOUT: Duration = Duration::from_millis(1500);
@@ -40,6 +42,7 @@ impl PeerConnection {
         info_hash: &[u8],
         my_peer_id: &[u8],
         peer_id: &[u8],
+        on_read: Box<dyn Fn((crate::Message, SocketAddr, SocketAddr), &[u8]) -> () + 'static + Send> 
     ) -> Result<Self, SendError> {
         let handshake = Handshake {
             info_hash: info_hash.to_vec(),
@@ -90,14 +93,17 @@ impl PeerConnection {
                     bitfield: None,
                     peer_addr,
                     local_addr,
-                    in_progress_requests: 0
+                    in_progress_requests: 0,
+                    on_read: Box::new(on_read),
                 }
             })
     }
 
     pub fn write_message(&mut self, m: Message) -> Result<(), SendError> {
+        let to_write = &m.serialize();
+        (self.on_read)((m, self.peer_addr, self.local_addr), to_write);
         self.stream
-            .write_all(&m.serialize())
+            .write_all(to_write)
             .map_err(SendError::Write)
     }
 

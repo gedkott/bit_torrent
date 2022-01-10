@@ -185,8 +185,10 @@ impl Message {
                 }
                 5 => {
                     let bitfield_len = prefix_len - 1;
+                    let bytes = bytes.take(bitfield_len as usize).collect::<Vec<u8>>();
+                    println!("bitfield {:?}", bytes.iter().map(|b| format!("{:b}", b)).collect::<String>());
                     Ok(Message::BitField(
-                        bytes.take(bitfield_len as usize).collect(),
+                        bytes,
                     ))
                 }
                 // request

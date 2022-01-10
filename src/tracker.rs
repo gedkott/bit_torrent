@@ -182,6 +182,8 @@ impl Tracker {
             .build()
             .map_err(TrackerResponseError::HttpError)?;
 
+        println!("announce url {:?}", request.url());
+
         self.client
             .execute(request)
             .map_err(TrackerResponseError::HttpError)

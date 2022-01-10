@@ -20,6 +20,18 @@ impl BitField {
             None => Err(BitFieldError::InvalidBit(bit)),
         }
     }
+
+    pub fn set(&mut self, bit: usize) {
+        let byte = bit / 8;
+        let offset_in_byte = bit % 8;
+        match self.bf.get_mut(byte) {
+            Some(byte) => {
+                let left_shifted = 1 << (7 - offset_in_byte);
+                *byte = left_shifted | *byte;
+            }
+            None => return
+        };
+    }
 }
 
 impl From<Vec<u8>> for BitField {
@@ -38,6 +50,22 @@ mod tests {
         // [ [0..1], [0..1, 1], [0..1, 0, 1], [0.. 1, 1, 1]  ]
 
         for bit in &[7, 14, 15, 21, 23, 29, 30, 31] {
+            assert_eq!(Ok(true), bitfield.is_set(*bit));
+        }
+    }
+
+    #[test]
+    fn it_can_set_a_bit_in_existing_bitfield() {
+        let mut bitfield: BitField = vec![192].into();
+        // [ [1, 1, 0]  ]
+
+        for bit in &[0, 1] {
+            assert_eq!(Ok(true), bitfield.is_set(*bit));
+        }
+
+        for bit in &[2] {
+            assert_eq!(Ok(false), bitfield.is_set(*bit));
+            bitfield.set(*bit);
             assert_eq!(Ok(true), bitfield.is_set(*bit));
         }
     }

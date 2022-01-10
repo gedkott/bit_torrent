@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::net::TcpStream;
+use std::net::{TcpStream, SocketAddr};
 use std::sync::{Arc, RwLock};
 use std::thread::{sleep, spawn, JoinHandle};
 use std::time::Duration;
@@ -33,10 +33,10 @@ use bitfield::BitField;
 mod logger;
 use logger::Logger;
 
-const TORRENT_FILE: &str = "Charlie_Chaplin_Mabels_Strange_Predicament.avi.torrent";
+const TORRENT_FILE: &str = "10_23_invoice.pdf.torrent";
 const CONNECTION_TIMEOUT: Duration = Duration::from_millis(250);
 const READ_TIMEOUT: Duration = Duration::from_millis(1000);
-const PROGRESS_WAIT_TIME: Duration = Duration::from_secs(10);
+const PROGRESS_WAIT_TIME: Duration = Duration::from_secs(3);
 const THREADS_PER_PEER: u8 = 1;
 const MAX_IN_PROGRESS_REQUESTS_PER_CONNECTION: usize = 128;
 
@@ -65,6 +65,7 @@ impl TorrentProcessor {
         let local_peer_id = random_string();
         let logger = Arc::new(RwLock::new(Logger::new(log_file_path)));
         let torrent = Torrent::new(&meta_info);
+        println!("torrent {:?}", torrent);
         let torrent = Arc::new(RwLock::new(torrent));
 
         TorrentProcessor {
@@ -91,7 +92,17 @@ impl TorrentProcessor {
                     event: Event::Started,
                 },
             )
-            .map(|resp: TrackerPeerResponse| resp.map(Peer::from).collect());
+            .map(|resp: TrackerPeerResponse| {
+                let x: Vec<_> = resp.collect();
+                println!("peers {:?}", x);
+                x.into_iter().map(Peer::from)
+                    // Don't connect to the client we are "pretending to be" at 127.0.0.1:8999
+                    .filter(|x| match x.socket_addr {
+                        std::net::SocketAddr::V4(sa) => !(*sa.ip() == std::net::Ipv4Addr::new(127, 0, 0, 1) && sa.port() == 8999u16),
+                        std::net::SocketAddr::V6(_) => true,
+                    })
+                    .collect()
+            });
 
         println!(
             "possible peers count {:?}",
@@ -119,6 +130,7 @@ impl TorrentProcessor {
                     let t = t.read().unwrap();
                     println!("percent complete: {}", t.percent_complete);
                     println!("repeated completed blocks: {:?}", t.repeated_blocks);
+                    println!("in progress blocks: {:?}", t.in_progress_blocks);
                 });
 
                 for jh in jhs {
@@ -138,6 +150,7 @@ impl TorrentProcessor {
             .map(|_| {
                 let torrent = Arc::clone(&self.torrent);
                 let peer = Arc::clone(&peer);
+                let peer_addr = peer.socket_addr.to_string();
                 let connection = self.connect(peer);
                 let logger = Arc::clone(&self.logger);
                 let work = move |mut connection: PeerConnection| {
@@ -155,22 +168,27 @@ impl TorrentProcessor {
                                 Err(e) => {
                                     match e {
                                         MessageParseError::ConnectionRefused => {
+                                            println!("Exiting {:?}", e);
                                             done = true;
                                             continue;
                                         },
                                         MessageParseError::ConnectionReset => {
+                                            println!("Exiting {:?}", e);
                                             done = true;
                                             continue;
                                         },
                                         MessageParseError::ConnectionAborted => {
+                                            println!("Exiting {:?}", e);
                                             done = true;
                                             continue;
                                         },
                                         MessageParseError::WouldBlock => {
+                                            println!("would block");
                                         },
                                         MessageParseError::TimedOut => {
                                         },
-                                        _ => {
+                                        me => {
+                                            println!("Exiting {:?}", me);
                                             done = true;
                                             continue;
                                         },
@@ -178,6 +196,9 @@ impl TorrentProcessor {
                                 }
                             }
                             done = torrent.read().unwrap().are_we_done_yet();
+                            if done {
+                                println!("done because torrent said so");
+                            }
                         }
                         println!("a connection has finally exited on its own... still being awaited by main potentially....");
                 };
@@ -186,7 +207,7 @@ impl TorrentProcessor {
                         Some(spawn(move || work(connection)))
                     }
                     Err(e) => {
-                        println!("connection err: {:?}", e);
+                        println!("connection err with client {:?}: {:?}", peer_addr, e);
                         None
                     }
                 }
@@ -208,6 +229,7 @@ impl TorrentProcessor {
     }
 
     fn connect(&self, peer: Arc<Peer>) -> Result<PeerConnection, SendError> {
+        let logger = self.logger.clone();
         let stream =
             TcpStream::connect_timeout(&peer.socket_addr, CONNECTION_TIMEOUT).map(|stream| {
                 let _ = stream.set_read_timeout(Some(READ_TIMEOUT));
@@ -219,6 +241,10 @@ impl TorrentProcessor {
                 &self.meta_info.info_hash,
                 self.local_peer_id.as_bytes(),
                 &peer.id,
+                Box::new(move |message: (crate::Message, SocketAddr, SocketAddr), original_bytes: &[u8]| {
+                    let _ = logger.write().unwrap().log(&format!("From: {}, To: {}, Message: {}  ----  {:?}", message.2, message.1, message.0, original_bytes));
+
+                })
             )
         })
     }
@@ -273,6 +299,7 @@ fn process_message(
             if index >= torrent.read().unwrap().total_pieces {
                 MessageResult::BadPeerHave
             } else {
+                connection.bitfield.as_mut().map(|bf| bf.set(index as usize)); 
                 connection.is_local_interested = true;
                 connection.write_message(Message::Interested).unwrap();
                 MessageResult::Ok
