@@ -26,6 +26,7 @@ pub struct Block {
     offset: u32,
     last_request: Option<Instant>,
     piece_index: u32,
+    block_length: u32,
 }
 
 #[derive(Debug, PartialEq, Eq, Hash)]
@@ -48,7 +49,7 @@ pub struct Torrent {
     pub percent_complete: f32,
     pub repeated_blocks: HashMap<(u32, u32), u32>,
 
-    in_progress_blocks: Vec<Block>,
+    pub in_progress_blocks: Vec<Block>,
     completed_pieces: Vec<Vec<Option<Block>>>,
 }
 
@@ -73,6 +74,7 @@ impl Torrent {
                         data: None,
                         last_request: None,
                         piece_index: index,
+                        block_length: FIXED_BLOCK_SIZE,
                     })
                     .collect();
                 Piece {
@@ -84,19 +86,35 @@ impl Torrent {
             .collect();
 
         let last_piece_length = total_length % piece_length;
+        println!(
+            "total length {} piece_length {} last piece length {}",
+            total_length, piece_length, last_piece_length
+        );
         let last_piece_block_count =
             (last_piece_length as f32 / FIXED_BLOCK_SIZE as f32).ceil() as u32;
         let last_piece_index = (total_length as f32 / piece_length as f32).floor() as u32;
 
-        let last_blocks = (0..last_piece_block_count)
+        let mut last_blocks: VecDeque<Block> = (0..last_piece_block_count - 1)
             .map(|block_index| Block {
                 state: BlockState::NotRequested,
                 offset: FIXED_BLOCK_SIZE * block_index,
                 data: None,
                 last_request: None,
                 piece_index: (pieces.len()) as u32,
+                block_length: FIXED_BLOCK_SIZE,
             })
             .collect();
+
+        let last_block = Block {
+            state: BlockState::NotRequested,
+            offset: FIXED_BLOCK_SIZE * (last_piece_block_count - 1),
+            data: None,
+            last_request: None,
+            piece_index: (pieces.len()) as u32,
+            block_length: last_piece_length - (FIXED_BLOCK_SIZE * last_blocks.len() as u32),
+        };
+
+        last_blocks.push_back(last_block);
 
         pieces.push(Piece {
             index: last_piece_index,
@@ -153,6 +171,8 @@ impl Torrent {
             res
         };
 
+        println!("selected piece {:?} based on bf {:?}", res, bitfield);
+
         match res {
             Some((piece_index, blocks_to_request_queue)) => {
                 // we can give them any block in p.index's block queue
@@ -161,6 +181,8 @@ impl Torrent {
                 next_block.state = BlockState::Requested;
                 next_block.last_request = Some(Instant::now());
                 self.requested_blocks += 1;
+
+                let block_length = next_block.block_length;
 
                 self.in_progress_blocks.push(next_block);
 
@@ -175,11 +197,7 @@ impl Torrent {
                     self.pieces.swap_remove(index);
                 }
 
-                Some(PieceIndexOffsetLength(
-                    piece_index,
-                    offset,
-                    FIXED_BLOCK_SIZE,
-                ))
+                Some(PieceIndexOffsetLength(piece_index, offset, block_length))
             }
             None => None,
         }
