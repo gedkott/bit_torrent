@@ -3,3 +3,4 @@ myfile.torrent
 log.txt
 node_modules/
 package-lock.json
+*.avi

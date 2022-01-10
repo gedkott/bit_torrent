@@ -33,12 +33,12 @@ use bitfield::BitField;
 mod logger;
 use logger::Logger;
 
-const TORRENT_FILE: &str = "./sample-pdf-file.pdf.torrent";
+const TORRENT_FILE: &str = "Charlie_Chaplin_Mabels_Strange_Predicament.avi.torrent";
 const CONNECTION_TIMEOUT: Duration = Duration::from_millis(250);
 const READ_TIMEOUT: Duration = Duration::from_millis(1000);
 const PROGRESS_WAIT_TIME: Duration = Duration::from_secs(3);
 const THREADS_PER_PEER: u8 = 1;
-const MAX_IN_PROGRESS_REQUESTS_PER_CONNECTION: usize = 128;
+const MAX_IN_PROGRESS_REQUESTS_PER_CONNECTION: usize = 256;
 
 type TrackerPeerResponse = Box<dyn Iterator<Item = TrackerPeer>>;
 type PeerThreads = Vec<JoinHandle<()>>;
@@ -108,13 +108,13 @@ impl TorrentProcessor {
                     .collect()
             });
 
-        println!(
-            "possible peers count {:?}",
-            possible_peers
-                .as_ref()
-                .map(|pp: &Vec<Peer>| pp.len())
-                .unwrap_or(0)
-        );
+        // println!(
+        //     "possible peers count {:?}",
+        //     possible_peers
+        //         .as_ref()
+        //         .map(|pp: &Vec<Peer>| pp.len())
+        //         .unwrap_or(0)
+        // );
 
         match possible_peers.map(|peers: Vec<Peer>| {
             let join_handles: Vec<PeerThreads> = peers
@@ -134,7 +134,7 @@ impl TorrentProcessor {
                     let t = t.read().unwrap();
                     println!("percent complete: {}", t.percent_complete);
                     println!("repeated completed blocks: {:?}", t.repeated_blocks);
-                    println!("in progress blocks: {:?}", t.in_progress_blocks);
+                    println!("in progress blocks: {:?}", t.in_progress_blocks.len());
                 });
 
                 for jh in jhs {
@@ -187,7 +187,7 @@ impl TorrentProcessor {
                                             continue;
                                         },
                                         MessageParseError::WouldBlock => {
-                                            println!("would block");
+                                            // println!("would block");
                                         },
                                         MessageParseError::TimedOut => {
                                         },
@@ -221,10 +221,10 @@ impl TorrentProcessor {
             })
             .collect::<Vec<_>>();
 
-        println!(
-            "{:?} threads spawned for a connection",
-            actual_threads.len()
-        );
+        // println!(
+        //     "{:?} threads spawned for a connection",
+        //     actual_threads.len()
+        // );
 
         actual_threads
             .into_iter()

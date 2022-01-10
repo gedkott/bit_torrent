@@ -76,7 +76,7 @@ impl PeerConnection {
                         if handshake.info_hash == return_handshake.info_hash && return_handshake.peer_id == peer_id {
                             Ok(stream)
                         } else {
-                            println!("outgoing handshake: {:?}\nincoming handshake: {:?}\nexpected peer id: {:?}", handshake, return_handshake, peer_id);
+                            // println!("outgoing handshake: {:?}\nincoming handshake: {:?}\nexpected peer id: {:?}", handshake, return_handshake, peer_id);
                             Err(SendError::UnexpectedInfoHashOrPeerId)
                         }
                     })

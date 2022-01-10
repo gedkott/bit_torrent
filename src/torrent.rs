@@ -86,10 +86,10 @@ impl Torrent {
             .collect();
 
         let last_piece_length = total_length % piece_length;
-        println!(
-            "total length {} piece_length {} last piece length {}",
-            total_length, piece_length, last_piece_length
-        );
+        // println!(
+        //     "total length {} piece_length {} last piece length {}",
+        //     total_length, piece_length, last_piece_length
+        // );
         let last_piece_block_count =
             (last_piece_length as f32 / FIXED_BLOCK_SIZE as f32).ceil() as u32;
         let last_piece_index = (total_length as f32 / piece_length as f32).floor() as u32;
@@ -141,7 +141,7 @@ impl Torrent {
     }
 
     pub fn get_next_block(&mut self, bitfield: &BitField) -> Option<PieceIndexOffsetLength> {
-        if self.in_progress_blocks.len() == 256 {
+        if self.in_progress_blocks.len() == 512 {
             // there are no more blocks for the requester to help with "right now"
             println!(
                 "we are at capacity for new in progress blocks; current in progress: {:?}",
@@ -171,7 +171,7 @@ impl Torrent {
             res
         };
 
-        println!("selected piece {:?} based on bf {:?}", res, bitfield);
+        // println!("selected piece {:?} based on bf {:?}", res, bitfield);
 
         match res {
             Some((piece_index, blocks_to_request_queue)) => {
