@@ -26,7 +26,7 @@ pub struct Block {
     offset: u32,
     last_request: Option<Instant>,
     piece_index: u32,
-    block_length: u32
+    block_length: u32,
 }
 
 #[derive(Debug, PartialEq, Eq, Hash)]
@@ -74,7 +74,7 @@ impl Torrent {
                         data: None,
                         last_request: None,
                         piece_index: index,
-                        block_length: FIXED_BLOCK_SIZE
+                        block_length: FIXED_BLOCK_SIZE,
                     })
                     .collect();
                 Piece {
@@ -86,7 +86,10 @@ impl Torrent {
             .collect();
 
         let last_piece_length = total_length % piece_length;
-        println!("total length {} piece_length {} last piece length {}", total_length, piece_length, last_piece_length);
+        println!(
+            "total length {} piece_length {} last piece length {}",
+            total_length, piece_length, last_piece_length
+        );
         let last_piece_block_count =
             (last_piece_length as f32 / FIXED_BLOCK_SIZE as f32).ceil() as u32;
         let last_piece_index = (total_length as f32 / piece_length as f32).floor() as u32;
@@ -98,7 +101,7 @@ impl Torrent {
                 data: None,
                 last_request: None,
                 piece_index: (pieces.len()) as u32,
-                block_length: FIXED_BLOCK_SIZE
+                block_length: FIXED_BLOCK_SIZE,
             })
             .collect();
 
@@ -108,7 +111,7 @@ impl Torrent {
             data: None,
             last_request: None,
             piece_index: (pieces.len()) as u32,
-            block_length: last_piece_length - (FIXED_BLOCK_SIZE * last_blocks.len() as u32)
+            block_length: last_piece_length - (FIXED_BLOCK_SIZE * last_blocks.len() as u32),
         };
 
         last_blocks.push_back(last_block);
@@ -194,11 +197,7 @@ impl Torrent {
                     self.pieces.swap_remove(index);
                 }
 
-                Some(PieceIndexOffsetLength(
-                    piece_index,
-                    offset,
-                    block_length,
-                ))
+                Some(PieceIndexOffsetLength(piece_index, offset, block_length))
             }
             None => None,
         }

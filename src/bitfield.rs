@@ -29,7 +29,7 @@ impl BitField {
                 let left_shifted = 1 << (7 - offset_in_byte);
                 *byte = left_shifted | *byte;
             }
-            None => return
+            None => return,
         };
     }
 }

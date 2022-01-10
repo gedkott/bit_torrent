@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::net::{TcpStream, SocketAddr};
+use std::net::{SocketAddr, TcpStream};
 use std::sync::{Arc, RwLock};
 use std::thread::{sleep, spawn, JoinHandle};
 use std::time::Duration;
@@ -33,7 +33,7 @@ use bitfield::BitField;
 mod logger;
 use logger::Logger;
 
-const TORRENT_FILE: &str = "10_23_invoice.pdf.torrent";
+const TORRENT_FILE: &str = "./sample-pdf-file.pdf.torrent";
 const CONNECTION_TIMEOUT: Duration = Duration::from_millis(250);
 const READ_TIMEOUT: Duration = Duration::from_millis(1000);
 const PROGRESS_WAIT_TIME: Duration = Duration::from_secs(3);
@@ -95,10 +95,14 @@ impl TorrentProcessor {
             .map(|resp: TrackerPeerResponse| {
                 let x: Vec<_> = resp.collect();
                 println!("peers {:?}", x);
-                x.into_iter().map(Peer::from)
+                x.into_iter()
+                    .map(Peer::from)
                     // Don't connect to the client we are "pretending to be" at 127.0.0.1:8999
                     .filter(|x| match x.socket_addr {
-                        std::net::SocketAddr::V4(sa) => !(*sa.ip() == std::net::Ipv4Addr::new(127, 0, 0, 1) && sa.port() == 8999u16),
+                        std::net::SocketAddr::V4(sa) => {
+                            !(*sa.ip() == std::net::Ipv4Addr::new(127, 0, 0, 1)
+                                && sa.port() == 8999u16)
+                        }
                         std::net::SocketAddr::V6(_) => true,
                     })
                     .collect()
@@ -241,10 +245,15 @@ impl TorrentProcessor {
                 &self.meta_info.info_hash,
                 self.local_peer_id.as_bytes(),
                 &peer.id,
-                Box::new(move |message: (crate::Message, SocketAddr, SocketAddr), original_bytes: &[u8]| {
-                    let _ = logger.write().unwrap().log(&format!("From: {}, To: {}, Message: {}  ----  {:?}", message.2, message.1, message.0, original_bytes));
-
-                })
+                Box::new(
+                    move |message: (crate::Message, SocketAddr, SocketAddr),
+                          original_bytes: &[u8]| {
+                        let _ = logger.write().unwrap().log(&format!(
+                            "From: {}, To: {}, Message: {}  ----  {:?}",
+                            message.2, message.1, message.0, original_bytes
+                        ));
+                    },
+                ),
             )
         })
     }
@@ -299,7 +308,10 @@ fn process_message(
             if index >= torrent.read().unwrap().total_pieces {
                 MessageResult::BadPeerHave
             } else {
-                connection.bitfield.as_mut().map(|bf| bf.set(index as usize)); 
+                connection
+                    .bitfield
+                    .as_mut()
+                    .map(|bf| bf.set(index as usize));
                 connection.is_local_interested = true;
                 connection.write_message(Message::Interested).unwrap();
                 MessageResult::Ok
