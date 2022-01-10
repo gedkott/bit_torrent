@@ -65,7 +65,7 @@ impl TorrentProcessor {
         let local_peer_id = random_string();
         let logger = Arc::new(RwLock::new(Logger::new(log_file_path)));
         let torrent = Torrent::new(&meta_info);
-        println!("torrent {:?}", torrent);
+        println!("torrent num pieces {:?} num blocks {:?} len of pieces vec {:?}", torrent.total_pieces, torrent.total_blocks, torrent.pieces.len());
         let torrent = Arc::new(RwLock::new(torrent));
 
         TorrentProcessor {

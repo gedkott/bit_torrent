@@ -13,7 +13,7 @@ pub trait PiecedContent {
 }
 
 #[derive(Debug)]
-struct Piece {
+pub struct Piece {
     index: u32,
     blocks: VecDeque<Block>,
     length: u32,
@@ -40,8 +40,8 @@ const FIXED_BLOCK_SIZE: u32 = 16384;
 
 #[derive(Debug)]
 pub struct Torrent {
-    total_blocks: u32,
-    pieces: Vec<Piece>,
+    pub total_blocks: u32,
+    pub pieces: Vec<Piece>,
     pub total_pieces: u32,
     file_name: String,
     completed_blocks: u32,
