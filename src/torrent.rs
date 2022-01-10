@@ -42,6 +42,8 @@ const FIXED_BLOCK_SIZE: u32 = 16384;
 pub struct Torrent {
     pub total_blocks: u32,
     pub pieces: Vec<Piece>,
+    piece_length: u32,
+    total_length: u32,
     pub total_pieces: u32,
     file_name: String,
     completed_blocks: u32,
@@ -127,6 +129,8 @@ impl Torrent {
         Torrent {
             total_blocks,
             pieces,
+            piece_length,
+            total_length,
             total_pieces: number_of_pieces,
             file_name: pieced_content.name(),
             completed_blocks: 0,
@@ -240,26 +244,36 @@ impl Torrent {
         let mut file = File::create(file_name).unwrap();
         for (piece_index, list_of_filled_blocks) in self.completed_pieces.iter().enumerate() {
             for (block_index, block) in list_of_filled_blocks.iter().enumerate() {
-                match block {
-                    Some(b) => {
-                        let bytes = b.data.as_ref();
-                        match bytes {
-                            Some(b) => {
-                                file.write_all(b).unwrap();
-                            }
-                            None => {
-                                println!(
-                                    "missing block {:?} of piece {:?}",
-                                    b.offset, b.piece_index
-                                )
+                let last_piece_length = self.total_length % self.piece_length;
+                let last_piece_block_count =
+                    (last_piece_length as f32 / FIXED_BLOCK_SIZE as f32).ceil() as u32;
+                let last_piece_index =
+                    (self.total_length as f32 / self.piece_length as f32).floor() as u32;
+
+                if !(piece_index as u32 == last_piece_index
+                    && block_index as u32 + 1 > last_piece_block_count)
+                {
+                    match block {
+                        Some(b) => {
+                            let bytes = b.data.as_ref();
+                            match bytes {
+                                Some(b) => {
+                                    file.write_all(b).unwrap();
+                                }
+                                None => {
+                                    println!(
+                                        "missing block {:?} of piece {:?}",
+                                        b.offset, b.piece_index
+                                    )
+                                }
                             }
                         }
-                    }
-                    None => {
-                        println!(
-                            "missing block index {:?} of piece {:?}",
-                            block_index, piece_index
-                        )
+                        None => {
+                            println!(
+                                "missing block index {:?} of piece {:?}",
+                                block_index, piece_index
+                            )
+                        }
                     }
                 }
             }

@@ -40,7 +40,6 @@ const PROGRESS_WAIT_TIME: Duration = Duration::from_secs(3);
 const THREADS_PER_PEER: u8 = 1;
 const MAX_IN_PROGRESS_REQUESTS_PER_CONNECTION: usize = 256;
 
-type TrackerPeerResponse = Box<dyn Iterator<Item = TrackerPeer>>;
 type PeerThreads = Vec<JoinHandle<()>>;
 type Blocks = Vec<Option<PieceIndexOffsetLength>>;
 
@@ -65,7 +64,12 @@ impl TorrentProcessor {
         let local_peer_id = random_string();
         let logger = Arc::new(RwLock::new(Logger::new(log_file_path)));
         let torrent = Torrent::new(&meta_info);
-        println!("torrent num pieces {:?} num blocks {:?} len of pieces vec {:?}", torrent.total_pieces, torrent.total_blocks, torrent.pieces.len());
+        println!(
+            "torrent num pieces {:?} num blocks {:?} len of pieces vec {:?}",
+            torrent.total_pieces,
+            torrent.total_blocks,
+            torrent.pieces.len()
+        );
         let torrent = Arc::new(RwLock::new(torrent));
 
         TorrentProcessor {
@@ -92,10 +96,8 @@ impl TorrentProcessor {
                     event: Event::Started,
                 },
             )
-            .map(|resp: TrackerPeerResponse| {
-                let x: Vec<_> = resp.collect();
-                println!("peers {:?}", x);
-                x.into_iter()
+            .map(|resp: Vec<TrackerPeer>| {
+                resp.into_iter()
                     .map(Peer::from)
                     // Don't connect to the client we are "pretending to be" at 127.0.0.1:8999
                     .filter(|x| match x.socket_addr {
@@ -104,6 +106,10 @@ impl TorrentProcessor {
                                 && sa.port() == 8999u16)
                         }
                         std::net::SocketAddr::V6(_) => true,
+                    })
+                    .map(|p| {
+                        println!("peer {:?}", p);
+                        p
                     })
                     .collect()
             });
@@ -121,14 +127,14 @@ impl TorrentProcessor {
                 .into_iter()
                 .map(|p| self.generate_peer_threads(Arc::new(p)))
                 .collect();
-            (join_handles, &self.torrent)
+            join_handles
         }) {
-            Ok((jhs, torrent)) => {
+            Ok(jhs) => {
                 println!(
                     "total connections/threads working {:?}",
                     jhs.iter().flatten().collect::<Vec<_>>().len()
                 );
-                let t = Arc::clone(&torrent);
+                let t = Arc::clone(&self.torrent);
                 spawn(move || loop {
                     sleep(PROGRESS_WAIT_TIME);
                     let t = t.read().unwrap();
@@ -143,7 +149,7 @@ impl TorrentProcessor {
                     }
                 }
 
-                let _ = torrent.read().unwrap().to_file();
+                let _ = self.torrent.read().unwrap().to_file();
             }
             Err(e) => panic!("{:?}", e),
         }

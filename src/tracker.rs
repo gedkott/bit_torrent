@@ -20,10 +20,6 @@ pub enum TrackerPeer {
     SocketAddr(SocketAddr),
 }
 
-pub trait TrackerResponse<'a> {
-    fn peers(self) -> &'a mut dyn Iterator<Item = TrackerPeer>;
-}
-
 impl From<TrackerPeer> for Peer {
     fn from(tp: TrackerPeer) -> Self {
         match tp {
@@ -63,29 +59,23 @@ pub struct Tracker {
     client: reqwest::blocking::Client,
 }
 
-impl<'a> From<&bencode::BencodableByteString>
-    for Result<Box<dyn Iterator<Item = TrackerPeer>>, TrackerResponseError>
-{
-    fn from(
-        b: &bencode::BencodableByteString,
-    ) -> Result<Box<dyn Iterator<Item = TrackerPeer>>, TrackerResponseError> {
+impl<'a> From<&bencode::BencodableByteString> for Result<Vec<TrackerPeer>, TrackerResponseError> {
+    fn from(b: &bencode::BencodableByteString) -> Result<Vec<TrackerPeer>, TrackerResponseError> {
         let peer_bytes: &[u8] = b.as_bytes();
         let total_bytes = peer_bytes.len();
         if total_bytes % 6 == 0 {
-            let mut socket_addrs: Vec<SocketAddr> = vec![];
+            let mut socket_addrs: Vec<TrackerPeer> = vec![];
             let mut i = 0;
             while i < total_bytes {
                 let ip_bytes = &peer_bytes[i..i + 6];
                 let ip = Ipv4Addr::new(ip_bytes[0], ip_bytes[1], ip_bytes[2], ip_bytes[3]);
                 let port = u16::from_be_bytes([peer_bytes[4], peer_bytes[5]]);
                 let socket_addr = SocketAddr::V4(SocketAddrV4::new(ip, port));
-                socket_addrs.push(socket_addr);
+                socket_addrs.push(TrackerPeer::SocketAddr(socket_addr));
                 i += 6;
             }
 
-            Ok(Box::new(
-                socket_addrs.into_iter().map(TrackerPeer::SocketAddr),
-            ))
+            Ok(socket_addrs)
         } else {
             Err(TrackerResponseError::MisalignedPeers)
         }
@@ -96,12 +86,8 @@ struct BencodableList<'a> {
     list: &'a [bencode::Bencodable],
 }
 
-impl<'a> From<BencodableList<'a>>
-    for Result<Box<dyn Iterator<Item = TrackerPeer>>, TrackerResponseError>
-{
-    fn from(
-        b: BencodableList,
-    ) -> Result<Box<dyn Iterator<Item = TrackerPeer>>, TrackerResponseError> {
+impl<'a> From<BencodableList<'a>> for Result<Vec<TrackerPeer>, TrackerResponseError> {
+    fn from(b: BencodableList) -> Result<Vec<TrackerPeer>, TrackerResponseError> {
         let mut rl = vec![];
 
         for b in b.list {
@@ -150,7 +136,7 @@ impl<'a> From<BencodableList<'a>>
                 _ => return Err(TrackerResponseError::UnexpectedBencodable(b.clone())),
             }
         }
-        Ok(Box::new(rl.into_iter()))
+        Ok(rl)
     }
 }
 
@@ -165,7 +151,7 @@ impl Tracker {
         &self,
         announce_url: &str,
         trp: TrackerRequestParameters,
-    ) -> Result<Box<dyn Iterator<Item = TrackerPeer>>, TrackerResponseError> {
+    ) -> Result<Vec<TrackerPeer>, TrackerResponseError> {
         let request = self
             .client
             .get(announce_url)
@@ -223,9 +209,7 @@ mod tests {
             0x8C as u8, 0xCD as u8, 0x54 as u8, 0x23 as u8, 0x27 as u8,
         ];
 
-        let actual = Result::from(&bencode::BencodableByteString::from(example))
-            .unwrap()
-            .collect::<Vec<TrackerPeer>>();
+        let actual = Result::from(&bencode::BencodableByteString::from(example)).unwrap();
         let expected = vec![
             TrackerPeer::SocketAddr(
                 "73.140.205.84:8999"

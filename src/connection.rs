@@ -73,7 +73,9 @@ impl PeerConnection {
                 Handshake::new(&buf)
                     .map_err(|_| SendError::HandshakeParse)
                     .and_then(|return_handshake| {
-                        if handshake.info_hash == return_handshake.info_hash && return_handshake.peer_id == peer_id {
+                        if handshake.info_hash == return_handshake.info_hash
+                            && return_handshake.peer_id == peer_id
+                        {
                             Ok(stream)
                         } else {
                             // println!("outgoing handshake: {:?}\nincoming handshake: {:?}\nexpected peer id: {:?}", handshake, return_handshake, peer_id);
@@ -83,10 +85,10 @@ impl PeerConnection {
             })
             .map(|s| {
                 let peer_addr = match &s {
-                    Stream::Tcp(tcps) => tcps.peer_addr().unwrap()
+                    Stream::Tcp(tcps) => tcps.peer_addr().unwrap(),
                 };
                 let local_addr = match &s {
-                    Stream::Tcp(tcps) => tcps.local_addr().unwrap()
+                    Stream::Tcp(tcps) => tcps.local_addr().unwrap(),
                 };
                 PeerConnection {
                     stream: s,
