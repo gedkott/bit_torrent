@@ -88,23 +88,37 @@ impl<'a> From<&'a Bencodable> for MetaInfoFile {
                         };
 
                         let length_key = &BencodableByteString::from("length");
+                        // TODO(): Need to implement multiple files to download larger charlie chaplin torrent as a test...
                         let length = match &btm.get(length_key) {
-                            Some(Bencodable::Integer(i)) => i,
-                            _ => panic!(
-                                "did not find `length` (expected to find `files` instead): {:?}",
-                                b
-                            ),
+                            Some(Bencodable::Integer(i)) => Some(i),
+                            _ => None,
                         };
 
-                        Info {
-                            piece_length,
-                            pieces,
-                            name: name.to_string(),
-                            files: Files::File(File {
-                                length: *length,
-                                path: name.to_string(),
-                            }),
-                        }
+                        length
+                            .map(|l| Info {
+                                piece_length,
+                                pieces,
+                                name: name.to_string(),
+                                files: Files::File(File {
+                                    length: *l,
+                                    path: name.to_string(),
+                                }),
+                            })
+                            .unwrap_or_else(|| {
+                                let files_key = &BencodableByteString::from("files");
+                                let files = match &btm[files_key] {
+                                    Bencodable::List(bs) => bs,
+                                    _ => {
+                                        panic!("did not find `files` when `length` was unavailable")
+                                    }
+                                };
+                                Info {
+                                    piece_length,
+                                    pieces,
+                                    name: name.to_string(),
+                                    files: unreachable!(),
+                                }
+                            })
                     }
                     _ => panic!("did not find `info`"),
                 }

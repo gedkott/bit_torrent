@@ -50,6 +50,10 @@ impl PeerConnection {
             info_hash: info_hash.to_vec(),
             peer_id: my_peer_id.to_vec(),
         };
+        println!(
+            "outgoing handshake has peer ID: {:?}",
+            std::str::from_utf8(peer_id).unwrap()
+        );
         let bytes: Vec<u8> = handshake.serialize();
 
         stream
@@ -73,13 +77,18 @@ impl PeerConnection {
                 Handshake::new(&buf)
                     .map_err(|_| SendError::HandshakeParse)
                     .and_then(|return_handshake| {
+                        println!(
+                            "incoming handshake has peer ID: {:?}",
+                            std::str::from_utf8(&return_handshake.peer_id).unwrap()
+                        );
                         if handshake.info_hash == return_handshake.info_hash
                             && return_handshake.peer_id == peer_id
                         {
                             Ok(stream)
                         } else {
-                            // println!("outgoing handshake: {:?}\nincoming handshake: {:?}\nexpected peer id: {:?}", handshake, return_handshake, peer_id);
-                            Err(SendError::UnexpectedInfoHashOrPeerId)
+                            println!("the client's peer ID did not match...");
+                            // Err(SendError::UnexpectedInfoHashOrPeerId)
+                            Ok(stream)
                         }
                     })
             })

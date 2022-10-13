@@ -33,7 +33,7 @@ use bitfield::BitField;
 mod logger;
 use logger::Logger;
 
-const TORRENT_FILE: &str = "Charlie_Chaplin_Mabels_Strange_Predicament.avi.torrent";
+const TORRENT_FILE: &str = "charlie-chaplin-.-mabels-strange-predicament-1914-restored-short-silent-film-noir-comedy_archive.torrent";
 const CONNECTION_TIMEOUT: Duration = Duration::from_millis(250);
 const READ_TIMEOUT: Duration = Duration::from_millis(1000);
 const PROGRESS_WAIT_TIME: Duration = Duration::from_secs(3);
@@ -61,6 +61,7 @@ struct TorrentProcessor {
 impl TorrentProcessor {
     fn new(torrent_file_path: &str, log_file_path: &str) -> Self {
         let meta_info = MetaInfoFile::from(File::open(torrent_file_path).unwrap());
+        println!("meta info {:?}", meta_info);
         let local_peer_id = random_string();
         let logger = Arc::new(RwLock::new(Logger::new(log_file_path)));
         let torrent = Torrent::new(&meta_info);
@@ -108,19 +109,19 @@ impl TorrentProcessor {
                         std::net::SocketAddr::V6(_) => true,
                     })
                     .map(|p| {
-                        println!("peer {:?}", p);
+                        println!("peer {:?}, peer_id {:?}", p, std::str::from_utf8(&p.id));
                         p
                     })
                     .collect()
             });
 
-        // println!(
-        //     "possible peers count {:?}",
-        //     possible_peers
-        //         .as_ref()
-        //         .map(|pp: &Vec<Peer>| pp.len())
-        //         .unwrap_or(0)
-        // );
+        println!(
+            "possible peers count {:?}",
+            possible_peers
+                .as_ref()
+                .map(|pp: &Vec<Peer>| pp.len())
+                .unwrap_or(0)
+        );
 
         match possible_peers.map(|peers: Vec<Peer>| {
             let join_handles: Vec<PeerThreads> = peers
@@ -358,6 +359,11 @@ fn process_message(
 }
 
 fn main() {
+    // this program is just trying to connect to as many seeders as possible and go nuts downloading
     let tp = TorrentProcessor::new(TORRENT_FILE, "log.txt");
     tp.start();
+
+    // Now, we also need to stick around and stay connected to the tracker long term so we can connect multiple clients for our own little localhost swarm for no reason except to learn
+
+    // For now, though, can I write a client more easily in JS so I can just test that my client can successfully download?
 }
