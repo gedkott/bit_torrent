@@ -33,12 +33,12 @@ use bitfield::BitField;
 mod logger;
 use logger::Logger;
 
-const TORRENT_FILE: &str = "charlie-chaplin-.-mabels-strange-predicament-1914-restored-short-silent-film-noir-comedy_archive.torrent";
+const TORRENT_FILE: &str = "Charlie Chaplin . Mabel's Strange Predicament (1914 Restored Short Silent Film Noir Comedy).mp4.torrent";
 const CONNECTION_TIMEOUT: Duration = Duration::from_millis(250);
 const READ_TIMEOUT: Duration = Duration::from_millis(1000);
 const PROGRESS_WAIT_TIME: Duration = Duration::from_secs(3);
 const THREADS_PER_PEER: u8 = 1;
-const MAX_IN_PROGRESS_REQUESTS_PER_CONNECTION: usize = 256;
+const MAX_IN_PROGRESS_REQUESTS_PER_CONNECTION: usize = 1;
 
 type PeerThreads = Vec<JoinHandle<()>>;
 type Blocks = Vec<Option<PieceIndexOffsetLength>>;
@@ -170,7 +170,7 @@ impl TorrentProcessor {
                             let message = connection.read_message();
                             match message {
                                 Ok(message) => {
-                                    let _ = logger.write().unwrap().log(&format!("From: {}, To: {}, Message: {}", connection.peer_addr, connection.local_addr, message));
+                                    let _ = logger.write().unwrap().log(&format!("From: {}, To (me): {}, Message: {}", connection.peer_addr, connection.local_addr, message));
                                     let result = process_message(Arc::clone(&torrent), message, &mut connection);
                                     if result != MessageResult::Ok {
                                         println!("got a err for message result which means some odd scenario occurred {:?}", result);
@@ -256,7 +256,7 @@ impl TorrentProcessor {
                     move |message: (crate::Message, SocketAddr, SocketAddr),
                           original_bytes: &[u8]| {
                         let _ = logger.write().unwrap().log(&format!(
-                            "From: {}, To: {}, Message: {}  ----  {:?}",
+                            "From (me): {}, To: {}, Message: {}  ----  {:?}",
                             message.2, message.1, message.0, original_bytes
                         ));
                     },

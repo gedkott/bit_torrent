@@ -9,7 +9,7 @@ pub trait PiecedContent {
     fn number_of_pieces(&self) -> u32;
     fn piece_length(&self) -> u32;
     fn total_length(&self) -> u32;
-    fn name(&self) -> String;
+    fn name(&self) -> &str;
 }
 
 #[derive(Debug)]
@@ -88,12 +88,20 @@ impl Torrent {
             .collect();
 
         let last_piece_length = total_length % piece_length;
-        // println!(
-        //     "total length {} piece_length {} last piece length {}",
-        //     total_length, piece_length, last_piece_length
-        // );
-        let last_piece_block_count =
-            (last_piece_length as f32 / FIXED_BLOCK_SIZE as f32).ceil() as u32;
+        println!(
+            "total length {} piece_length {} last piece length {}",
+            total_length, piece_length, last_piece_length
+        );
+        let last_piece_block_count = {
+            // TODO(): hack for controlling subtraction with overflow when perfect pieces are divided
+            let m = (last_piece_length as f32 / FIXED_BLOCK_SIZE as f32).ceil() as u32;
+            if m == 0 {
+                1
+            } else {
+                m
+            }
+        };
+
         let last_piece_index = (total_length as f32 / piece_length as f32).floor() as u32;
 
         let mut last_blocks: VecDeque<Block> = (0..last_piece_block_count - 1)
@@ -132,7 +140,7 @@ impl Torrent {
             piece_length,
             total_length,
             total_pieces: number_of_pieces,
-            file_name: pieced_content.name(),
+            file_name: pieced_content.name().to_string(),
             completed_blocks: 0,
             requested_blocks: 0,
             percent_complete: 0.0,
@@ -145,7 +153,7 @@ impl Torrent {
     }
 
     pub fn get_next_block(&mut self, bitfield: &BitField) -> Option<PieceIndexOffsetLength> {
-        if self.in_progress_blocks.len() == 512 {
+        if self.in_progress_blocks.len() == 1 {
             // there are no more blocks for the requester to help with "right now"
             println!(
                 "we are at capacity for new in progress blocks; current in progress: {:?}",
@@ -261,18 +269,18 @@ impl Torrent {
                                     file.write_all(b).unwrap();
                                 }
                                 None => {
-                                    // println!(
-                                    //     "missing block {:?} of piece {:?}",
-                                    //     b.offset, b.piece_index
-                                    // )
+                                    println!(
+                                        "missing block {:?} of piece {:?}",
+                                        b.offset, b.piece_index
+                                    )
                                 }
                             }
                         }
                         None => {
-                            // println!(
-                            //     "missing block index {:?} of piece {:?}",
-                            //     block_index, piece_index
-                            // )
+                            println!(
+                                "missing block index {:?} of piece {:?}",
+                                block_index, piece_index
+                            )
                         }
                     }
                 }
