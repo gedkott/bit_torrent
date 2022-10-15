@@ -248,6 +248,7 @@ impl Torrent {
     }
 
     pub fn to_file(&self) -> File {
+        // TODO(): Need to read metainfo and actually split the entire file into its parts based on the metainfo multi file (if multi file)
         let file_name = &self.file_name;
         let mut file = File::create(file_name).unwrap();
         for (piece_index, list_of_filled_blocks) in self.completed_pieces.iter().enumerate() {
@@ -277,10 +278,10 @@ impl Torrent {
                             }
                         }
                         None => {
-                            println!(
-                                "missing block index {:?} of piece {:?}",
-                                block_index, piece_index
-                            )
+                            // println!(
+                            //     "missing block index {:?} of piece {:?}",
+                            //     block_index, piece_index
+                            // )
                         }
                     }
                 }

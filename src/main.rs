@@ -33,7 +33,7 @@ use bitfield::BitField;
 mod logger;
 use logger::Logger;
 
-const TORRENT_FILE: &str = "Charlie Chaplin . Mabel's Strange Predicament (1914 Restored Short Silent Film Noir Comedy).mp4.torrent";
+const TORRENT_FILE: &str = "charlie-chaplin-.-mabels-strange-predicament-1914-restored-short-silent-film-noir-comedy_archive.local.torrent";
 const CONNECTION_TIMEOUT: Duration = Duration::from_millis(250);
 const READ_TIMEOUT: Duration = Duration::from_millis(1000);
 const PROGRESS_WAIT_TIME: Duration = Duration::from_secs(3);

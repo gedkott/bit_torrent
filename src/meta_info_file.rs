@@ -30,7 +30,7 @@ pub enum Info {
     MultiFile {
         piece_length: u32,
         pieces: Pieces,
-        name: String,
+        directoryName: String,
         files: Vec<File>
     }
 }
@@ -46,7 +46,7 @@ impl MetaInfoFile {
     pub fn file_name(&self) -> &str {
         match &self.info {
             Info::SingleFile { piece_length, pieces, name, file } => name,
-            Info::MultiFile { piece_length, pieces, name, files } => name,
+            Info::MultiFile { piece_length, pieces, directoryName: name, files } => name,
         }
     }
 }
@@ -55,14 +55,14 @@ impl PiecedContent for MetaInfoFile {
     fn number_of_pieces(&self) -> u32 {
         match &self.info {
             Info::SingleFile { piece_length, pieces, name, file } => pieces.0.len() as u32,
-            Info::MultiFile { piece_length, pieces, name, files } => pieces.0.len() as u32,
+            Info::MultiFile { piece_length, pieces, directoryName: name, files } => pieces.0.len() as u32,
         }
     }
 
     fn piece_length(&self) -> u32 {
         match &self.info {
             Info::SingleFile { piece_length, pieces, name, file } => *piece_length,
-            Info::MultiFile { piece_length, pieces, name, files } => *piece_length,
+            Info::MultiFile { piece_length, pieces, directoryName: name, files } => *piece_length,
         }
     }
 
@@ -73,7 +73,7 @@ impl PiecedContent for MetaInfoFile {
     fn total_length(&self) -> u32 {
         match &self.info {
             Info::SingleFile { piece_length, pieces, name, file } => file.length,
-            Info::MultiFile { piece_length, pieces, name, files } => files.iter().map(|f| f.length).sum(),
+            Info::MultiFile { piece_length, pieces, directoryName: name, files } => files.iter().map(|f| f.length).sum(),
         }
     }
 }
@@ -173,7 +173,7 @@ fn get_info_from_btm(btm: &BTreeMap<BencodableByteString, Bencodable>) -> Result
         Ok(Info::MultiFile {
             piece_length,
             pieces: Pieces(pieces),
-            name: name.to_string(),
+            directoryName: name.to_string(),
             files: files,
         })
     }
