@@ -1,6 +1,7 @@
+use crate::meta_info_file::File;
 use std::collections::{HashMap, VecDeque};
-use std::fs::File;
-use std::io::Write;
+use std::fs::File as FsFile;
+use std::io::{Cursor, Read, Write};
 use std::time::Instant;
 
 use crate::BitField;
@@ -9,7 +10,6 @@ pub trait PiecedContent {
     fn number_of_pieces(&self) -> u32;
     fn piece_length(&self) -> u32;
     fn total_length(&self) -> u32;
-    fn name(&self) -> &str;
 }
 
 #[derive(Debug)]
@@ -45,7 +45,6 @@ pub struct Torrent {
     piece_length: u32,
     total_length: u32,
     pub total_pieces: u32,
-    file_name: String,
     completed_blocks: u32,
     requested_blocks: u32,
     pub percent_complete: f32,
@@ -140,7 +139,6 @@ impl Torrent {
             piece_length,
             total_length,
             total_pieces: number_of_pieces,
-            file_name: pieced_content.name().to_string(),
             completed_blocks: 0,
             requested_blocks: 0,
             percent_complete: 0.0,
@@ -247,10 +245,8 @@ impl Torrent {
         }
     }
 
-    pub fn to_file(&self) -> File {
-        // TODO(): Need to read metainfo and actually split the entire file into its parts based on the metainfo multi file (if multi file)
-        let file_name = &self.file_name;
-        let mut file = File::create(file_name).unwrap();
+    pub fn to_file(&self, files: Vec<&File>) -> Vec<Result<FsFile, std::io::Error>> {
+        let mut buffer = Vec::with_capacity(self.total_length as usize);
         for (piece_index, list_of_filled_blocks) in self.completed_pieces.iter().enumerate() {
             for (block_index, block) in list_of_filled_blocks.iter().enumerate() {
                 let last_piece_length = self.total_length % self.piece_length;
@@ -267,7 +263,7 @@ impl Torrent {
                             let bytes = b.data.as_ref();
                             match bytes {
                                 Some(b) => {
-                                    file.write_all(b).unwrap();
+                                    buffer.write_all(b).unwrap();
                                 }
                                 None => {
                                     println!(
@@ -287,7 +283,22 @@ impl Torrent {
                 }
             }
         }
-        file
+
+        // Now go through the buffer by size of files and write out the amount needed
+        let mut c = Cursor::new(buffer);
+        files
+            .iter()
+            .map(|f| {
+                let p = &f.path;
+                let l = f.length as usize;
+                let f = FsFile::create(p);
+                f.and_then(|mut f: FsFile| {
+                    let mut sized_buffer = vec![0u8; l];
+                    c.read_exact(&mut sized_buffer[..])
+                        .and_then(|_| f.write_all(&sized_buffer).and_then(|_| Ok(f)))
+                })
+            })
+            .collect::<Vec<Result<FsFile, _>>>()
     }
 
     pub fn are_we_done_yet(&self) -> bool {
@@ -306,9 +317,6 @@ mod tests {
         }
         fn piece_length(&self) -> u32 {
             131072
-        }
-        fn name(&self) -> String {
-            String::from("Charlie_Chaplin_Mabels_Strange_Predicament.avi")
         }
         fn total_length(&self) -> u32 {
             170835968

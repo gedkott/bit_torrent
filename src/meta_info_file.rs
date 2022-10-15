@@ -6,16 +6,16 @@ use std::fs::File as FsFile;
 use std::io::prelude::*;
 
 #[derive(Debug)]
-struct File {
-    length: u32,
-    path: String,
+pub struct File {
+    pub length: u32,
+    pub path: String,
 }
 
-struct Pieces(Vec<String>);
+pub struct Pieces(Vec<String>);
 
 impl std::fmt::Debug for Pieces {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Pieces")
+        write!(f, "Pieces: {}", self.0.len())
     }
 }
 
@@ -25,69 +25,92 @@ pub enum Info {
         piece_length: u32,
         pieces: Pieces,
         name: String,
-        file: File
+        file: File,
     },
     MultiFile {
         piece_length: u32,
         pieces: Pieces,
         directoryName: String,
-        files: Vec<File>
-    }
+        files: Vec<File>,
+    },
 }
 
 #[derive(Debug)]
 pub struct MetaInfoFile {
-    info: Info,
+    pub info: Info,
     pub announce: String,
     pub info_hash: [u8; 20],
-}
-
-impl MetaInfoFile {
-    pub fn file_name(&self) -> &str {
-        match &self.info {
-            Info::SingleFile { piece_length, pieces, name, file } => name,
-            Info::MultiFile { piece_length, pieces, directoryName: name, files } => name,
-        }
-    }
 }
 
 impl PiecedContent for MetaInfoFile {
     fn number_of_pieces(&self) -> u32 {
         match &self.info {
-            Info::SingleFile { piece_length, pieces, name, file } => pieces.0.len() as u32,
-            Info::MultiFile { piece_length, pieces, directoryName: name, files } => pieces.0.len() as u32,
+            Info::SingleFile {
+                piece_length,
+                pieces,
+                name,
+                file,
+            } => pieces.0.len() as u32,
+            Info::MultiFile {
+                piece_length,
+                pieces,
+                directoryName: name,
+                files,
+            } => pieces.0.len() as u32,
         }
     }
 
     fn piece_length(&self) -> u32 {
         match &self.info {
-            Info::SingleFile { piece_length, pieces, name, file } => *piece_length,
-            Info::MultiFile { piece_length, pieces, directoryName: name, files } => *piece_length,
+            Info::SingleFile {
+                piece_length,
+                pieces,
+                name,
+                file,
+            } => *piece_length,
+            Info::MultiFile {
+                piece_length,
+                pieces,
+                directoryName: name,
+                files,
+            } => *piece_length,
         }
-    }
-
-    fn name(&self) -> &str {
-        self.file_name()
     }
 
     fn total_length(&self) -> u32 {
         match &self.info {
-            Info::SingleFile { piece_length, pieces, name, file } => file.length,
-            Info::MultiFile { piece_length, pieces, directoryName: name, files } => files.iter().map(|f| f.length).sum(),
+            Info::SingleFile {
+                piece_length,
+                pieces,
+                name,
+                file,
+            } => file.length,
+            Info::MultiFile {
+                piece_length,
+                pieces,
+                directoryName: name,
+                files,
+            } => files.iter().map(|f| f.length).sum(),
         }
     }
 }
 
 #[derive(Debug)]
 enum MetaInfoFileParseError<'a> {
-    GenericError(&'a str)
+    GenericError(&'a str),
 }
 
-fn get_info_from_btm(btm: &BTreeMap<BencodableByteString, Bencodable>) -> Result<Info, MetaInfoFileParseError> {
+fn get_info_from_btm(
+    btm: &BTreeMap<BencodableByteString, Bencodable>,
+) -> Result<Info, MetaInfoFileParseError> {
     let piece_length_key = &BencodableByteString::from("piece length");
     let piece_length = match btm[piece_length_key] {
         Bencodable::Integer(i) => i,
-        _ => return Err(MetaInfoFileParseError::GenericError("did not find `piece length`")),
+        _ => {
+            return Err(MetaInfoFileParseError::GenericError(
+                "did not find `piece length`",
+            ))
+        }
     };
 
     let pieces_key = &BencodableByteString::from("pieces");
@@ -97,7 +120,11 @@ fn get_info_from_btm(btm: &BTreeMap<BencodableByteString, Bencodable>) -> Result
             .chunks(20)
             .map(|c| Sha1::from(c).hexdigest())
             .collect(),
-        _ => return Err(MetaInfoFileParseError::GenericError("did not find `pieces`")),
+        _ => {
+            return Err(MetaInfoFileParseError::GenericError(
+                "did not find `pieces`",
+            ))
+        }
     };
 
     let name_key = &BencodableByteString::from("name");
@@ -114,14 +141,14 @@ fn get_info_from_btm(btm: &BTreeMap<BencodableByteString, Bencodable>) -> Result
     };
 
     if let Some(l) = length {
-        Ok(Info::SingleFile  {
+        Ok(Info::SingleFile {
             piece_length,
             pieces: Pieces(pieces),
             name: name.to_string(),
             file: File {
                 length: *l,
                 path: name.to_string(),
-            }
+            },
         })
     } else {
         let files_key = &BencodableByteString::from("files");
@@ -130,7 +157,9 @@ fn get_info_from_btm(btm: &BTreeMap<BencodableByteString, Bencodable>) -> Result
             _ => {
                 panic!("did not find `files` when `length` was unavailable")
             }
-        }.iter().map(|b| -> Result<File, MetaInfoFileParseError> {
+        }
+        .iter()
+        .map(|b| -> Result<File, MetaInfoFileParseError> {
             println!("processing file bencodable {:?}\n", b);
             // crc32: ByteString(3481f090)
             // length: Integer(57772860)
@@ -143,33 +172,39 @@ fn get_info_from_btm(btm: &BTreeMap<BencodableByteString, Bencodable>) -> Result
                     let length_key = &BencodableByteString::from("length");
                     let length = match btm[length_key] {
                         Bencodable::Integer(i) => i,
-                        _ => return Err(MetaInfoFileParseError::GenericError("did not find `length` for file in multifile torrent")),
+                        _ => {
+                            return Err(MetaInfoFileParseError::GenericError(
+                                "did not find `length` for file in multifile torrent",
+                            ))
+                        }
                     };
 
                     let path_key = &BencodableByteString::from("path");
                     let path = match &btm[path_key] {
-                        Bencodable::List(bs) => {
-                            bs.iter().map(|b| {
-                                match &b {
-                                    Bencodable::ByteString(s) => s.as_string().unwrap().to_string(),
-                                    _ => panic!("could not construct path for file in multifile torrent")
+                        Bencodable::List(bs) => bs
+                            .iter()
+                            .map(|b| match &b {
+                                Bencodable::ByteString(s) => s.as_string().unwrap().to_string(),
+                                _ => {
+                                    panic!("could not construct path for file in multifile torrent")
                                 }
-                            }).collect::<Vec<String>>().join("\\")
-                        },
-                        _ => return Err(MetaInfoFileParseError::GenericError("did not find `path` for file in multifile torrent")),
+                            })
+                            .collect::<Vec<String>>()
+                            .join("\\"),
+                        _ => {
+                            return Err(MetaInfoFileParseError::GenericError(
+                                "did not find `path` for file in multifile torrent",
+                            ))
+                        }
                     };
 
-                    Ok(File {
-                        path,
-                        length
-                    })
+                    Ok(File { path, length })
                 }
                 _ => panic!("did not find `info`"),
             }
         })
-        .map(|rf| {
-            rf.unwrap()
-        }).collect();
+        .map(|rf| rf.unwrap())
+        .collect();
         Ok(Info::MultiFile {
             piece_length,
             pieces: Pieces(pieces),

@@ -150,7 +150,25 @@ impl TorrentProcessor {
                     }
                 }
 
-                let _ = self.torrent.read().unwrap().to_file();
+                // TODO(): Here is where we can decide how to take the whole file and split it into pieces
+                let files = match &self.meta_info.info {
+                    Info::SingleFile {
+                        piece_length,
+                        pieces,
+                        name,
+                        file,
+                    } => vec![file],
+                    Info::MultiFile {
+                        piece_length,
+                        pieces,
+                        directoryName,
+                        files,
+                    } => files.iter().map(|f| f).collect(),
+                };
+                let write_res = self.torrent.read().unwrap().to_file(files);
+                if write_res.iter().any(|r| r.is_err()) {
+                    println!("writ err {:?}", write_res)
+                }
             }
             Err(e) => panic!("{:?}", e),
         }
