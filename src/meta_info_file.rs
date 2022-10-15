@@ -1,6 +1,6 @@
 use crate::bencode::*;
 use crate::PiecedContent;
-use sha1::Sha1;
+use sha1::{Sha1, Digest};
 use std::collections::BTreeMap;
 use std::fs::File as FsFile;
 use std::io::prelude::*;
@@ -118,7 +118,10 @@ fn get_info_from_btm(
         Bencodable::ByteString(bs) => bs
             .as_bytes()
             .chunks(20)
-            .map(|c| Sha1::from(c).hexdigest())
+            .map(|c| {
+                let chars = <[u8; 20]>::from(Sha1::digest(c));
+                hex::encode(chars)
+            })
             .collect(),
         _ => {
             return Err(MetaInfoFileParseError::GenericError(
@@ -261,7 +264,7 @@ impl<'a> From<&'a Bencodable> for MetaInfoFile {
             };
             let mut hasher = Sha1::new();
             hasher.update(&info.unwrap());
-            hasher.digest().bytes()
+            <[u8; 20]>::from(hasher.finalize())
         };
 
         MetaInfoFile {
