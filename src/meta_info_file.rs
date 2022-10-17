@@ -1,6 +1,6 @@
 use crate::bencode::*;
 use crate::PiecedContent;
-use sha1::{Sha1, Digest};
+use sha1::{Digest, Sha1};
 use std::collections::BTreeMap;
 use std::fs::File as FsFile;
 use std::io::prelude::*;
@@ -30,7 +30,7 @@ pub enum Info {
     MultiFile {
         piece_length: u32,
         pieces: Pieces,
-        directoryName: String,
+        directory_name: String,
         files: Vec<File>,
     },
 }
@@ -46,16 +46,16 @@ impl PiecedContent for MetaInfoFile {
     fn number_of_pieces(&self) -> u32 {
         match &self.info {
             Info::SingleFile {
-                piece_length,
+                piece_length: _,
                 pieces,
-                name,
-                file,
+                name: _,
+                file: _,
             } => pieces.0.len() as u32,
             Info::MultiFile {
-                piece_length,
+                piece_length: _,
                 pieces,
-                directoryName: name,
-                files,
+                directory_name: _,
+                files: _,
             } => pieces.0.len() as u32,
         }
     }
@@ -64,15 +64,15 @@ impl PiecedContent for MetaInfoFile {
         match &self.info {
             Info::SingleFile {
                 piece_length,
-                pieces,
-                name,
-                file,
+                pieces: _,
+                name: _,
+                file: _,
             } => *piece_length,
             Info::MultiFile {
                 piece_length,
-                pieces,
-                directoryName: name,
-                files,
+                pieces: _,
+                directory_name: _,
+                files: _,
             } => *piece_length,
         }
     }
@@ -80,15 +80,15 @@ impl PiecedContent for MetaInfoFile {
     fn total_length(&self) -> u32 {
         match &self.info {
             Info::SingleFile {
-                piece_length,
-                pieces,
-                name,
+                piece_length: _,
+                pieces: _,
+                name: _,
                 file,
             } => file.length,
             Info::MultiFile {
-                piece_length,
-                pieces,
-                directoryName: name,
+                piece_length: _,
+                pieces: _,
+                directory_name: _,
                 files,
             } => files.iter().map(|f| f.length).sum(),
         }
@@ -211,8 +211,8 @@ fn get_info_from_btm(
         Ok(Info::MultiFile {
             piece_length,
             pieces: Pieces(pieces),
-            directoryName: name.to_string(),
-            files: files,
+            directory_name: name.to_string(),
+            files,
         })
     }
 }

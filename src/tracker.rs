@@ -59,7 +59,7 @@ pub struct Tracker {
     client: reqwest::blocking::Client,
 }
 
-impl<'a> From<&bencode::BencodableByteString> for Result<Vec<TrackerPeer>, TrackerResponseError> {
+impl From<&bencode::BencodableByteString> for Result<Vec<TrackerPeer>, TrackerResponseError> {
     fn from(b: &bencode::BencodableByteString) -> Result<Vec<TrackerPeer>, TrackerResponseError> {
         let peer_bytes: &[u8] = b.as_bytes();
         let total_bytes = peer_bytes.len();
@@ -175,7 +175,7 @@ impl Tracker {
             .map_err(TrackerResponseError::HttpError)
             .and_then(|r: Response| {
                 let bytes = r.bytes().map_err(TrackerResponseError::HttpError)?;
-                bencode::bdecode(&*bytes).map_err(TrackerResponseError::BdecodeFailure)
+                bencode::bdecode(&bytes).map_err(TrackerResponseError::BdecodeFailure)
             })
             .and_then(|bencodable| match bencodable {
                 bencode::Bencodable::Dictionary(mut btm) => {

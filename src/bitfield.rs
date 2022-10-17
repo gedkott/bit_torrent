@@ -24,12 +24,9 @@ impl BitField {
     pub fn set(&mut self, bit: usize) {
         let byte = bit / 8;
         let offset_in_byte = bit % 8;
-        match self.bf.get_mut(byte) {
-            Some(byte) => {
-                let left_shifted = 1 << (7 - offset_in_byte);
-                *byte = left_shifted | *byte;
-            }
-            None => return,
+        if let Some(byte) = self.bf.get_mut(byte) {
+            let left_shifted = 1 << (7 - offset_in_byte);
+            *byte |= left_shifted;
         };
     }
 }

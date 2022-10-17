@@ -41,7 +41,6 @@ const THREADS_PER_PEER: u8 = 1;
 const MAX_IN_PROGRESS_REQUESTS_PER_CONNECTION: usize = 1;
 
 type PeerThreads = Vec<JoinHandle<()>>;
-type Blocks = Vec<Option<PieceIndexOffsetLength>>;
 
 #[derive(PartialEq, Debug)]
 enum MessageResult {
@@ -133,7 +132,7 @@ impl TorrentProcessor {
             Ok(jhs) => {
                 println!(
                     "total connections/threads working {:?}",
-                    jhs.iter().flatten().collect::<Vec<_>>().len()
+                    jhs.iter().flatten().count()
                 );
                 let t = Arc::clone(&self.torrent);
                 spawn(move || loop {
@@ -150,24 +149,23 @@ impl TorrentProcessor {
                     }
                 }
 
-                // TODO(): Here is where we can decide how to take the whole file and split it into pieces
                 let files = match &self.meta_info.info {
                     Info::SingleFile {
-                        piece_length,
-                        pieces,
-                        name,
+                        piece_length: _,
+                        pieces: _,
+                        name: _,
                         file,
                     } => vec![file],
                     Info::MultiFile {
-                        piece_length,
-                        pieces,
-                        directoryName,
+                        piece_length: _,
+                        pieces: _,
+                        directory_name: _,
                         files,
-                    } => files.iter().map(|f| f).collect(),
+                    } => files.iter().collect(),
                 };
                 let write_res = self.torrent.read().unwrap().to_file(files);
                 if write_res.iter().any(|r| r.is_err()) {
-                    println!("writ err {:?}", write_res)
+                    println!("write err when writing blocks to file {:?}", write_res)
                 }
             }
             Err(e) => panic!("{:?}", e),
@@ -175,8 +173,8 @@ impl TorrentProcessor {
     }
 
     fn generate_peer_threads(&self, peer: Arc<Peer>) -> PeerThreads {
-        let actual_threads = (0..THREADS_PER_PEER)
-            .map(|_| {
+        (0..THREADS_PER_PEER)
+            .filter_map(|_| {
                 let torrent = Arc::clone(&self.torrent);
                 let peer = Arc::clone(&peer);
                 let peer_addr = peer.socket_addr.to_string();
@@ -241,19 +239,6 @@ impl TorrentProcessor {
                     }
                 }
             })
-            .filter(|ojh| {
-                ojh.is_some()
-            })
-            .collect::<Vec<_>>();
-
-        // println!(
-        //     "{:?} threads spawned for a connection",
-        //     actual_threads.len()
-        // );
-
-        actual_threads
-            .into_iter()
-            .map(|ojh| ojh.unwrap())
             .collect::<Vec<JoinHandle<()>>>()
     }
 
@@ -286,24 +271,23 @@ impl TorrentProcessor {
 
 fn request_blocks(torrent: Arc<RwLock<Torrent>>, connection: &mut PeerConnection) {
     if !connection.is_choked {
-        let bf = connection.bitfield.as_ref().unwrap();
         let in_progress = connection.in_progress_requests;
         let to_request = MAX_IN_PROGRESS_REQUESTS_PER_CONNECTION - in_progress;
         connection.in_progress_requests += to_request;
         let mut t = torrent.write().unwrap();
-        let blocks: Blocks = (0..to_request).map(|_| t.get_next_block(&bf)).collect();
+        let blocks: Vec<PieceIndexOffsetLength> = (0..to_request)
+            .filter_map(|_| {
+                let bf = connection.bitfield.as_ref().unwrap();
+                t.get_next_block(bf)
+            })
+            .collect();
         for b in blocks {
-            match b {
-                Some(PieceIndexOffsetLength(index, offset, length)) => {
-                    let message = Message::Request {
-                        index,
-                        begin: offset,
-                        length,
-                    };
-                    connection.write_message(message).unwrap();
-                }
-                None => {}
-            }
+            let message = Message::Request {
+                index: b.0,
+                begin: b.1,
+                length: b.2,
+            };
+            connection.write_message(message).unwrap();
         }
     }
 }
@@ -333,10 +317,9 @@ fn process_message(
             if index >= torrent.read().unwrap().total_pieces {
                 MessageResult::BadPeerHave
             } else {
-                connection
-                    .bitfield
-                    .as_mut()
-                    .map(|bf| bf.set(index as usize));
+                if let Some(bf) = connection.bitfield.as_mut() {
+                    bf.set(index as usize)
+                }
                 connection.is_local_interested = true;
                 connection.write_message(Message::Interested).unwrap();
                 MessageResult::Ok
