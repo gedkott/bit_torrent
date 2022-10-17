@@ -1,5 +1,6 @@
+use crate::meta_info_file::File;
 use std::collections::{HashMap, VecDeque};
-use std::fs::File;
+use std::fs::File as FsFile;
 use std::io::Write;
 use std::time::Instant;
 
@@ -9,19 +10,16 @@ pub trait PiecedContent {
     fn number_of_pieces(&self) -> u32;
     fn piece_length(&self) -> u32;
     fn total_length(&self) -> u32;
-    fn name(&self) -> String;
 }
 
 #[derive(Debug)]
 pub struct Piece {
     index: u32,
     blocks: VecDeque<Block>,
-    length: u32,
 }
 
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub struct Block {
-    data: Option<Vec<u8>>,
     state: BlockState,
     offset: u32,
     last_request: Option<Instant>,
@@ -43,9 +41,7 @@ pub struct Torrent {
     pub total_blocks: u32,
     pub pieces: Vec<Piece>,
     piece_length: u32,
-    total_length: u32,
     pub total_pieces: u32,
-    file_name: String,
     completed_blocks: u32,
     requested_blocks: u32,
     pub percent_complete: f32,
@@ -53,6 +49,7 @@ pub struct Torrent {
 
     pub in_progress_blocks: Vec<Block>,
     completed_pieces: Vec<Vec<Option<Block>>>,
+    data_buffer: Vec<u8>,
 }
 
 #[derive(Debug, PartialEq, Eq, Hash)]
@@ -73,34 +70,36 @@ impl Torrent {
                     .map(|block_index| Block {
                         state: BlockState::NotRequested,
                         offset: FIXED_BLOCK_SIZE * block_index,
-                        data: None,
                         last_request: None,
                         piece_index: index,
                         block_length: FIXED_BLOCK_SIZE,
                     })
                     .collect();
-                Piece {
-                    index,
-                    blocks,
-                    length: piece_length,
-                }
+                Piece { index, blocks }
             })
             .collect();
 
         let last_piece_length = total_length % piece_length;
-        // println!(
-        //     "total length {} piece_length {} last piece length {}",
-        //     total_length, piece_length, last_piece_length
-        // );
-        let last_piece_block_count =
-            (last_piece_length as f32 / FIXED_BLOCK_SIZE as f32).ceil() as u32;
+        println!(
+            "total length {} piece_length {} last piece length {}",
+            total_length, piece_length, last_piece_length
+        );
+        let last_piece_block_count = {
+            // TODO(): hack for controlling subtraction with overflow when perfect pieces are divided
+            let m = (last_piece_length as f32 / FIXED_BLOCK_SIZE as f32).ceil() as u32;
+            if m == 0 {
+                1
+            } else {
+                m
+            }
+        };
+
         let last_piece_index = (total_length as f32 / piece_length as f32).floor() as u32;
 
         let mut last_blocks: VecDeque<Block> = (0..last_piece_block_count - 1)
             .map(|block_index| Block {
                 state: BlockState::NotRequested,
                 offset: FIXED_BLOCK_SIZE * block_index,
-                data: None,
                 last_request: None,
                 piece_index: (pieces.len()) as u32,
                 block_length: FIXED_BLOCK_SIZE,
@@ -110,7 +109,6 @@ impl Torrent {
         let last_block = Block {
             state: BlockState::NotRequested,
             offset: FIXED_BLOCK_SIZE * (last_piece_block_count - 1),
-            data: None,
             last_request: None,
             piece_index: (pieces.len()) as u32,
             block_length: last_piece_length - (FIXED_BLOCK_SIZE * last_blocks.len() as u32),
@@ -121,7 +119,6 @@ impl Torrent {
         pieces.push(Piece {
             index: last_piece_index,
             blocks: last_blocks,
-            length: last_piece_length,
         });
 
         let total_blocks = ((number_of_pieces - 1) * number_of_blocks) + last_piece_block_count;
@@ -130,9 +127,7 @@ impl Torrent {
             total_blocks,
             pieces,
             piece_length,
-            total_length,
             total_pieces: number_of_pieces,
-            file_name: pieced_content.name(),
             completed_blocks: 0,
             requested_blocks: 0,
             percent_complete: 0.0,
@@ -141,11 +136,12 @@ impl Torrent {
             completed_pieces: (0..number_of_pieces)
                 .map(|_pi| (0..number_of_blocks).map(|_bi| None).collect())
                 .collect(),
+            data_buffer: vec![0u8; total_length as usize],
         }
     }
 
     pub fn get_next_block(&mut self, bitfield: &BitField) -> Option<PieceIndexOffsetLength> {
-        if self.in_progress_blocks.len() == 512 {
+        if self.in_progress_blocks.len() == 1 {
             // there are no more blocks for the requester to help with "right now"
             println!(
                 "we are at capacity for new in progress blocks; current in progress: {:?}",
@@ -225,8 +221,13 @@ impl Torrent {
         let b = &mut self.in_progress_blocks[index];
 
         if b.state != BlockState::Done {
+            let blocks_file_position: usize =
+                (piece_index * self.piece_length) as usize + offset as usize;
             b.state = BlockState::Done;
-            b.data = Some(data.to_vec());
+            let mut buff =
+                &mut self.data_buffer[blocks_file_position..blocks_file_position + data.len()];
+            buff.write_all(data)
+                .expect("failed to write a block of data to internal buffer");
             self.completed_blocks += 1;
             self.percent_complete = self.completed_blocks as f32 / self.total_blocks as f32;
             self.completed_pieces[piece_index as usize][block_index as usize] =
@@ -239,46 +240,30 @@ impl Torrent {
         }
     }
 
-    pub fn to_file(&self) -> File {
-        let file_name = &self.file_name;
-        let mut file = File::create(file_name).unwrap();
-        for (piece_index, list_of_filled_blocks) in self.completed_pieces.iter().enumerate() {
-            for (block_index, block) in list_of_filled_blocks.iter().enumerate() {
-                let last_piece_length = self.total_length % self.piece_length;
-                let last_piece_block_count =
-                    (last_piece_length as f32 / FIXED_BLOCK_SIZE as f32).ceil() as u32;
-                let last_piece_index =
-                    (self.total_length as f32 / self.piece_length as f32).floor() as u32;
+    pub fn to_file(&self, files: Vec<&File>) -> Vec<Result<FsFile, std::io::Error>> {
+        // Now go through the buffer by size of files and write out the amount needed
+        let mut curr_pos = 0;
+        files
+            .iter()
+            .map(|f| {
+                let p = &f.path;
+                let l = f.length as usize;
+                println!(
+                    "trying to write internal buffer (length {}) to file from {} to {}",
+                    self.data_buffer.len(),
+                    curr_pos,
+                    curr_pos + l
+                );
+                let buff = &self.data_buffer[curr_pos..curr_pos + l];
 
-                if !(piece_index as u32 == last_piece_index
-                    && block_index as u32 + 1 > last_piece_block_count)
-                {
-                    match block {
-                        Some(b) => {
-                            let bytes = b.data.as_ref();
-                            match bytes {
-                                Some(b) => {
-                                    file.write_all(b).unwrap();
-                                }
-                                None => {
-                                    println!(
-                                        "missing block {:?} of piece {:?}",
-                                        b.offset, b.piece_index
-                                    )
-                                }
-                            }
-                        }
-                        None => {
-                            println!(
-                                "missing block index {:?} of piece {:?}",
-                                block_index, piece_index
-                            )
-                        }
-                    }
-                }
-            }
-        }
-        file
+                let f = FsFile::create(p);
+                f.and_then(|mut f| {
+                    let r = f.write_all(buff).map(|_| f);
+                    curr_pos += l;
+                    r
+                })
+            })
+            .collect::<Vec<Result<FsFile, _>>>()
     }
 
     pub fn are_we_done_yet(&self) -> bool {
@@ -298,9 +283,6 @@ mod tests {
         fn piece_length(&self) -> u32 {
             131072
         }
-        fn name(&self) -> String {
-            String::from("Charlie_Chaplin_Mabels_Strange_Predicament.avi")
-        }
         fn total_length(&self) -> u32 {
             170835968
         }
@@ -318,7 +300,10 @@ mod tests {
 
         let last = t.pieces.last().unwrap();
         let expected_last_length = 49152;
-        assert_eq!(last.length, expected_last_length);
+        assert_eq!(
+            last.blocks.len() * FIXED_BLOCK_SIZE as usize,
+            expected_last_length
+        );
 
         assert_eq!(3, last.blocks.len());
 

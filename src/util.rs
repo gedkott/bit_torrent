@@ -1,4 +1,4 @@
-use rand::Rng;
+use rand::{distributions::Alphanumeric, Rng};
 use std::convert::TryInto;
 use std::sync::mpsc::channel;
 use std::thread;
@@ -14,7 +14,11 @@ pub fn attach_bytes(bytes: &[std::slice::Iter<'_, u8>]) -> Vec<u8> {
 }
 
 pub fn random_string() -> String {
-    rand::thread_rng().gen_ascii_chars().take(20).collect()
+    rand::thread_rng()
+        .sample_iter(&Alphanumeric)
+        .take(20)
+        .map(char::from)
+        .collect()
 }
 
 #[derive(Debug)]

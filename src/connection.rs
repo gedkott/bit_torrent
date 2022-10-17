@@ -23,6 +23,8 @@ pub enum Stream {
     Tcp(TcpStream),
 }
 
+type OnReadCallBack = Box<dyn Fn((crate::Message, SocketAddr, SocketAddr), &[u8]) + 'static + Send>;
+
 pub struct PeerConnection {
     stream: Stream,
     pub is_local_interested: bool,
@@ -31,7 +33,7 @@ pub struct PeerConnection {
     pub peer_addr: std::net::SocketAddr,
     pub local_addr: std::net::SocketAddr,
     pub in_progress_requests: usize,
-    on_read: Box<dyn Fn((crate::Message, SocketAddr, SocketAddr), &[u8]) -> () + 'static + Send>,
+    on_read: OnReadCallBack,
 }
 
 const HANDSHAKE_READ_TIMEOUT: Duration = Duration::from_millis(1500);
@@ -42,14 +44,16 @@ impl PeerConnection {
         info_hash: &[u8],
         my_peer_id: &[u8],
         peer_id: &[u8],
-        on_read: Box<
-            dyn Fn((crate::Message, SocketAddr, SocketAddr), &[u8]) -> () + 'static + Send,
-        >,
+        on_read: OnReadCallBack,
     ) -> Result<Self, SendError> {
         let handshake = Handshake {
             info_hash: info_hash.to_vec(),
             peer_id: my_peer_id.to_vec(),
         };
+        println!(
+            "outgoing handshake has peer ID: {:?}",
+            std::str::from_utf8(peer_id).unwrap()
+        );
         let bytes: Vec<u8> = handshake.serialize();
 
         stream
@@ -72,14 +76,21 @@ impl PeerConnection {
             .and_then(|(buf, stream)| {
                 Handshake::new(&buf)
                     .map_err(|_| SendError::HandshakeParse)
-                    .and_then(|return_handshake| {
+                    .map(|return_handshake| {
+                        println!(
+                            "incoming handshake has peer ID: {:?}",
+                            std::str::from_utf8(&return_handshake.peer_id).unwrap()
+                        );
                         if handshake.info_hash == return_handshake.info_hash
                             && return_handshake.peer_id == peer_id
                         {
-                            Ok(stream)
+                            stream
                         } else {
-                            // println!("outgoing handshake: {:?}\nincoming handshake: {:?}\nexpected peer id: {:?}", handshake, return_handshake, peer_id);
-                            Err(SendError::UnexpectedInfoHashOrPeerId)
+                            println!(
+                                "the client's peer ID did not match... {:?}",
+                                SendError::UnexpectedInfoHashOrPeerId
+                            );
+                            stream
                         }
                     })
             })

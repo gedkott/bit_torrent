@@ -33,15 +33,14 @@ use bitfield::BitField;
 mod logger;
 use logger::Logger;
 
-const TORRENT_FILE: &str = "Charlie_Chaplin_Mabels_Strange_Predicament.avi.torrent";
+const TORRENT_FILE: &str = "charlie-chaplin-.-mabels-strange-predicament-1914-restored-short-silent-film-noir-comedy_archive.local.torrent";
 const CONNECTION_TIMEOUT: Duration = Duration::from_millis(250);
 const READ_TIMEOUT: Duration = Duration::from_millis(1000);
 const PROGRESS_WAIT_TIME: Duration = Duration::from_secs(3);
 const THREADS_PER_PEER: u8 = 1;
-const MAX_IN_PROGRESS_REQUESTS_PER_CONNECTION: usize = 256;
+const MAX_IN_PROGRESS_REQUESTS_PER_CONNECTION: usize = 1;
 
 type PeerThreads = Vec<JoinHandle<()>>;
-type Blocks = Vec<Option<PieceIndexOffsetLength>>;
 
 #[derive(PartialEq, Debug)]
 enum MessageResult {
@@ -61,6 +60,7 @@ struct TorrentProcessor {
 impl TorrentProcessor {
     fn new(torrent_file_path: &str, log_file_path: &str) -> Self {
         let meta_info = MetaInfoFile::from(File::open(torrent_file_path).unwrap());
+        println!("meta info {:?}", meta_info);
         let local_peer_id = random_string();
         let logger = Arc::new(RwLock::new(Logger::new(log_file_path)));
         let torrent = Torrent::new(&meta_info);
@@ -108,19 +108,19 @@ impl TorrentProcessor {
                         std::net::SocketAddr::V6(_) => true,
                     })
                     .map(|p| {
-                        println!("peer {:?}", p);
+                        println!("peer {:?}, peer_id {:?}", p, std::str::from_utf8(&p.id));
                         p
                     })
                     .collect()
             });
 
-        // println!(
-        //     "possible peers count {:?}",
-        //     possible_peers
-        //         .as_ref()
-        //         .map(|pp: &Vec<Peer>| pp.len())
-        //         .unwrap_or(0)
-        // );
+        println!(
+            "possible peers count {:?}",
+            possible_peers
+                .as_ref()
+                .map(|pp: &Vec<Peer>| pp.len())
+                .unwrap_or(0)
+        );
 
         match possible_peers.map(|peers: Vec<Peer>| {
             let join_handles: Vec<PeerThreads> = peers
@@ -132,7 +132,7 @@ impl TorrentProcessor {
             Ok(jhs) => {
                 println!(
                     "total connections/threads working {:?}",
-                    jhs.iter().flatten().collect::<Vec<_>>().len()
+                    jhs.iter().flatten().count()
                 );
                 let t = Arc::clone(&self.torrent);
                 spawn(move || loop {
@@ -149,15 +149,32 @@ impl TorrentProcessor {
                     }
                 }
 
-                let _ = self.torrent.read().unwrap().to_file();
+                let files = match &self.meta_info.info {
+                    Info::SingleFile {
+                        piece_length: _,
+                        pieces: _,
+                        name: _,
+                        file,
+                    } => vec![file],
+                    Info::MultiFile {
+                        piece_length: _,
+                        pieces: _,
+                        directory_name: _,
+                        files,
+                    } => files.iter().collect(),
+                };
+                let write_res = self.torrent.read().unwrap().to_file(files);
+                if write_res.iter().any(|r| r.is_err()) {
+                    println!("write err when writing blocks to file {:?}", write_res)
+                }
             }
             Err(e) => panic!("{:?}", e),
         }
     }
 
     fn generate_peer_threads(&self, peer: Arc<Peer>) -> PeerThreads {
-        let actual_threads = (0..THREADS_PER_PEER)
-            .map(|_| {
+        (0..THREADS_PER_PEER)
+            .filter_map(|_| {
                 let torrent = Arc::clone(&self.torrent);
                 let peer = Arc::clone(&peer);
                 let peer_addr = peer.socket_addr.to_string();
@@ -169,7 +186,7 @@ impl TorrentProcessor {
                             let message = connection.read_message();
                             match message {
                                 Ok(message) => {
-                                    let _ = logger.write().unwrap().log(&format!("From: {}, To: {}, Message: {}", connection.peer_addr, connection.local_addr, message));
+                                    let _ = logger.write().unwrap().log(&format!("From: {}, To (me): {}, Message: {}", connection.peer_addr, connection.local_addr, message));
                                     let result = process_message(Arc::clone(&torrent), message, &mut connection);
                                     if result != MessageResult::Ok {
                                         println!("got a err for message result which means some odd scenario occurred {:?}", result);
@@ -222,19 +239,6 @@ impl TorrentProcessor {
                     }
                 }
             })
-            .filter(|ojh| {
-                ojh.is_some()
-            })
-            .collect::<Vec<_>>();
-
-        // println!(
-        //     "{:?} threads spawned for a connection",
-        //     actual_threads.len()
-        // );
-
-        actual_threads
-            .into_iter()
-            .map(|ojh| ojh.unwrap())
             .collect::<Vec<JoinHandle<()>>>()
     }
 
@@ -255,7 +259,7 @@ impl TorrentProcessor {
                     move |message: (crate::Message, SocketAddr, SocketAddr),
                           original_bytes: &[u8]| {
                         let _ = logger.write().unwrap().log(&format!(
-                            "From: {}, To: {}, Message: {}  ----  {:?}",
+                            "From (me): {}, To: {}, Message: {}  ----  {:?}",
                             message.2, message.1, message.0, original_bytes
                         ));
                     },
@@ -267,24 +271,23 @@ impl TorrentProcessor {
 
 fn request_blocks(torrent: Arc<RwLock<Torrent>>, connection: &mut PeerConnection) {
     if !connection.is_choked {
-        let bf = connection.bitfield.as_ref().unwrap();
         let in_progress = connection.in_progress_requests;
         let to_request = MAX_IN_PROGRESS_REQUESTS_PER_CONNECTION - in_progress;
         connection.in_progress_requests += to_request;
         let mut t = torrent.write().unwrap();
-        let blocks: Blocks = (0..to_request).map(|_| t.get_next_block(&bf)).collect();
+        let blocks: Vec<PieceIndexOffsetLength> = (0..to_request)
+            .filter_map(|_| {
+                let bf = connection.bitfield.as_ref().unwrap();
+                t.get_next_block(bf)
+            })
+            .collect();
         for b in blocks {
-            match b {
-                Some(PieceIndexOffsetLength(index, offset, length)) => {
-                    let message = Message::Request {
-                        index,
-                        begin: offset,
-                        length,
-                    };
-                    connection.write_message(message).unwrap();
-                }
-                None => {}
-            }
+            let message = Message::Request {
+                index: b.0,
+                begin: b.1,
+                length: b.2,
+            };
+            connection.write_message(message).unwrap();
         }
     }
 }
@@ -314,10 +317,9 @@ fn process_message(
             if index >= torrent.read().unwrap().total_pieces {
                 MessageResult::BadPeerHave
             } else {
-                connection
-                    .bitfield
-                    .as_mut()
-                    .map(|bf| bf.set(index as usize));
+                if let Some(bf) = connection.bitfield.as_mut() {
+                    bf.set(index as usize)
+                }
                 connection.is_local_interested = true;
                 connection.write_message(Message::Interested).unwrap();
                 MessageResult::Ok
@@ -358,6 +360,11 @@ fn process_message(
 }
 
 fn main() {
+    // this program is just trying to connect to as many seeders as possible and go nuts downloading
     let tp = TorrentProcessor::new(TORRENT_FILE, "log.txt");
     tp.start();
+
+    // Now, we also need to stick around and stay connected to the tracker long term so we can connect multiple clients for our own little localhost swarm for no reason except to learn
+
+    // For now, though, can I write a client more easily in JS so I can just test that my client can successfully download?
 }

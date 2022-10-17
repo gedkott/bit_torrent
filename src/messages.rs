@@ -235,7 +235,7 @@ impl Handshake {
     }
 
     pub fn new(bytes: &[u8]) -> Result<Handshake, HandshakeParseError> {
-        let p_str_len: usize = (*bytes.get(0).ok_or(HandshakeParseError::PStrLen)?)
+        let p_str_len: usize = (*bytes.first().ok_or(HandshakeParseError::PStrLen)?)
             .try_into()
             .map_err(|_| HandshakeParseError::PStrLen)?;
 

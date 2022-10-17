@@ -55,9 +55,9 @@ impl From<&[u8]> for Bencodable {
 
 #[derive(Debug)]
 pub enum EncodeError {
-    ListEncodeFailure,
-    DictKeyEncodeFailure,
-    DictValueEncodeFailure,
+    List,
+    DictKey,
+    DictValue,
 }
 
 pub fn bencode(b: &Bencodable) -> Result<Vec<u8>, EncodeError> {
@@ -67,7 +67,7 @@ pub fn bencode(b: &Bencodable) -> Result<Vec<u8>, EncodeError> {
             let mut buff = vec![copy.as_bytes()];
             buff.push(b":");
             buff.push(&bs.0);
-            Ok(buff.into_iter().map(|x| x.to_owned()).flatten().collect())
+            Ok(buff.into_iter().flat_map(|x| x.to_owned()).collect())
         }
         Bencodable::Integer(int) => {
             let mut buff: Vec<Vec<u8>> = vec![b"i".to_vec()];
@@ -83,7 +83,7 @@ pub fn bencode(b: &Bencodable) -> Result<Vec<u8>, EncodeError> {
                     Ok(bencodable) => {
                         bs.push(bencodable);
                     }
-                    Err(_) => return Err(EncodeError::ListEncodeFailure),
+                    Err(_) => return Err(EncodeError::List),
                 }
             }
             let bytes_of_bytes = bs.into_iter().flatten().collect::<Vec<u8>>();
@@ -99,14 +99,14 @@ pub fn bencode(b: &Bencodable) -> Result<Vec<u8>, EncodeError> {
                     Ok(bencodable) => {
                         bs.push(bencodable);
                     }
-                    Err(_) => return Err(EncodeError::DictKeyEncodeFailure),
+                    Err(_) => return Err(EncodeError::DictKey),
                 }
 
                 match bencode(v) {
                     Ok(bencodable) => {
                         bs.push(bencodable);
                     }
-                    Err(_) => return Err(EncodeError::DictValueEncodeFailure),
+                    Err(_) => return Err(EncodeError::DictValue),
                 }
             }
             let bytes_of_bytes = bs.into_iter().flatten().collect::<Vec<u8>>();
@@ -142,14 +142,14 @@ pub struct BencodeParseError {
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum BencodeParseErrorType {
-    ParseInteger,
-    ParseList,
-    ParseDictionary,
-    ParseByteString,
-    ParseByteStringLength,
-    ParseInitiate,
-    ParseEnd,
-    ParseValue,
+    Integer,
+    List,
+    Dictionary,
+    ByteString,
+    ByteStringLength,
+    Initiate,
+    End,
+    Value,
 }
 
 impl From<(BencodeParseErrorType, usize, &[u8])> for BencodeParseError {
@@ -169,28 +169,20 @@ fn parse_byte_string(
     let mut i = index;
     let mut length_string = String::new();
     let mut next_char = *bencoded_value.get(i).ok_or_else(|| {
-        BencodeParseError::from((BencodeParseErrorType::ParseByteString, i, bencoded_value))
+        BencodeParseError::from((BencodeParseErrorType::ByteString, i, bencoded_value))
     })?;
     while next_char != b':' {
         i += 1;
         length_string.push(next_char as char);
         next_char = *bencoded_value.get(i).ok_or_else(|| {
-            BencodeParseError::from((
-                BencodeParseErrorType::ParseByteStringLength,
-                i,
-                bencoded_value,
-            ))
+            BencodeParseError::from((BencodeParseErrorType::ByteStringLength, i, bencoded_value))
         })?;
     }
     let length = length_string.parse::<usize>().map_err(|_| {
-        BencodeParseError::from((
-            BencodeParseErrorType::ParseByteStringLength,
-            i,
-            bencoded_value,
-        ))
+        BencodeParseError::from((BencodeParseErrorType::ByteStringLength, i, bencoded_value))
     })?;
     let relevant_slice = bencoded_value.get(i + 1..i + 1 + length).ok_or_else(|| {
-        BencodeParseError::from((BencodeParseErrorType::ParseByteString, i, bencoded_value))
+        BencodeParseError::from((BencodeParseErrorType::ByteString, i, bencoded_value))
     })?;
     let bencodable = Bencodable::from(relevant_slice);
     Ok(ParseResult::from((
@@ -203,17 +195,17 @@ fn parse_integer(index: usize, bencoded_value: &[u8]) -> Result<ParseResult, Ben
     let mut i = index;
     let mut integer_string = String::new();
     let mut next_char = *bencoded_value.get(i).ok_or_else(|| {
-        BencodeParseError::from((BencodeParseErrorType::ParseInteger, i, bencoded_value))
+        BencodeParseError::from((BencodeParseErrorType::Integer, i, bencoded_value))
     })?;
     while next_char != b'e' {
         i += 1;
         integer_string.push(next_char as char);
         next_char = *bencoded_value.get(i).ok_or_else(|| {
-            BencodeParseError::from((BencodeParseErrorType::ParseInteger, i, bencoded_value))
+            BencodeParseError::from((BencodeParseErrorType::Integer, i, bencoded_value))
         })?;
     }
     let integer = integer_string.parse::<u32>().map_err(|_| {
-        BencodeParseError::from((BencodeParseErrorType::ParseInteger, i, bencoded_value))
+        BencodeParseError::from((BencodeParseErrorType::Integer, i, bencoded_value))
     })?;
     // +1 for the last character consumed as part of parsing the bencodable ("e")
     Ok(ParseResult::from((i + 1, Bencodable::Integer(integer))))
@@ -222,15 +214,15 @@ fn parse_integer(index: usize, bencoded_value: &[u8]) -> Result<ParseResult, Ben
 fn parse_list(index: usize, bencoded_value: &[u8]) -> Result<ParseResult, BencodeParseError> {
     let mut i = index;
     let mut bencodables = vec![];
-    let mut next_char = *bencoded_value.get(i).ok_or_else(|| {
-        BencodeParseError::from((BencodeParseErrorType::ParseList, i, bencoded_value))
-    })?;
+    let mut next_char = *bencoded_value
+        .get(i)
+        .ok_or_else(|| BencodeParseError::from((BencodeParseErrorType::List, i, bencoded_value)))?;
     while next_char != b'e' {
         let item = parse_bencoded_value(i, bencoded_value)?;
         bencodables.push(item.bencodable);
         i = item.index;
         next_char = *bencoded_value.get(i).ok_or_else(|| {
-            BencodeParseError::from((BencodeParseErrorType::ParseList, i, bencoded_value))
+            BencodeParseError::from((BencodeParseErrorType::List, i, bencoded_value))
         })?;
     }
     // +1 for the last character consumed as part of parsing the bencodable ("e")
@@ -242,14 +234,14 @@ fn parse_dictionary(index: usize, bencoded_value: &[u8]) -> Result<ParseResult, 
     let mut i = index;
     let mut bencodables = BTreeMap::new();
     let mut next_char = *bencoded_value.get(i).ok_or_else(|| {
-        BencodeParseError::from((BencodeParseErrorType::ParseDictionary, i, bencoded_value))
+        BencodeParseError::from((BencodeParseErrorType::Dictionary, i, bencoded_value))
     })?;
     while next_char != b'e' {
         let byte_string_key =
             parse_bencoded_value(i, bencoded_value).and_then(|pr| match pr.bencodable {
                 Bencodable::ByteString(bs) => Ok((pr.index, bs.0)),
                 _ => Err(BencodeParseError::from((
-                    BencodeParseErrorType::ParseDictionary,
+                    BencodeParseErrorType::Dictionary,
                     i,
                     bencoded_value,
                 ))),
@@ -260,11 +252,7 @@ fn parse_dictionary(index: usize, bencoded_value: &[u8]) -> Result<ParseResult, 
         bencodables.insert(key, value);
         i = result.index;
         next_char = *bencoded_value.get(i).ok_or_else(|| {
-            BencodeParseError::from((
-                BencodeParseErrorType::ParseByteStringLength,
-                i,
-                bencoded_value,
-            ))
+            BencodeParseError::from((BencodeParseErrorType::ByteStringLength, i, bencoded_value))
         })?;
     }
     // +1 for the last character consumed as part of parsing the bencodable ("e")
@@ -280,7 +268,7 @@ fn parse_bencoded_value(
 ) -> Result<ParseResult, BencodeParseError> {
     let i = index;
     let b = *bencoded_value.get(i).ok_or_else(|| {
-        BencodeParseError::from((BencodeParseErrorType::ParseValue, i, bencoded_value))
+        BencodeParseError::from((BencodeParseErrorType::Value, i, bencoded_value))
     })?;
     if b.is_ascii_digit() {
         parse_byte_string(i, bencoded_value)
@@ -292,7 +280,7 @@ fn parse_bencoded_value(
         parse_dictionary(i + 1, bencoded_value)
     } else {
         Err(BencodeParseError::from((
-            BencodeParseErrorType::ParseInitiate,
+            BencodeParseErrorType::Initiate,
             i,
             bencoded_value,
         )))
@@ -305,7 +293,7 @@ pub fn bdecode(bencoded_bytes: &[u8]) -> Result<Bencodable, BencodeParseError> {
             let next_index = pr.index;
             if bencoded_bytes.get(next_index).is_some() {
                 Err(BencodeParseError::from((
-                    BencodeParseErrorType::ParseEnd,
+                    BencodeParseErrorType::End,
                     next_index,
                     bencoded_bytes,
                 )))
@@ -500,7 +488,7 @@ mod tests {
         assert_eq!(
             bdecode(b""),
             Err(BencodeParseError::from((
-                BencodeParseErrorType::ParseValue,
+                BencodeParseErrorType::Value,
                 0 as usize,
                 "".as_bytes()
             )))
@@ -511,7 +499,7 @@ mod tests {
     fn it_decodes_incomplete_bencode() {
         assert_eq!(
             bdecode(b"d9:publisher3:bob17:publisher-webpage1:www.example.com18:publisher.location4:homee"),
-            Err(BencodeParseError::from((BencodeParseErrorType::ParseInitiate, 40 as usize, "d9:publisher3:bob17:publisher-webpage1:www.example.com18:publisher.location4:homee".as_bytes())))
+            Err(BencodeParseError::from((BencodeParseErrorType::Initiate, 40 as usize, "d9:publisher3:bob17:publisher-webpage1:www.example.com18:publisher.location4:homee".as_bytes())))
         );
     }
 
@@ -520,7 +508,7 @@ mod tests {
         assert_eq!(
             bdecode(b"d"),
             Err(BencodeParseError::from((
-                BencodeParseErrorType::ParseDictionary,
+                BencodeParseErrorType::Dictionary,
                 1 as usize,
                 "d".as_bytes()
             )))
@@ -532,7 +520,7 @@ mod tests {
         assert_eq!(
             bdecode(b"li3e"),
             Err(BencodeParseError::from((
-                BencodeParseErrorType::ParseList,
+                BencodeParseErrorType::List,
                 4 as usize,
                 "li3e".as_bytes()
             )))
@@ -544,7 +532,7 @@ mod tests {
         assert_eq!(
             bdecode(b"i311111111111d"),
             Err(BencodeParseError::from((
-                BencodeParseErrorType::ParseInteger,
+                BencodeParseErrorType::Integer,
                 14 as usize,
                 "i311111111111d".as_bytes()
             )))
@@ -556,7 +544,7 @@ mod tests {
         assert_eq!(
             bdecode(b"2:a"),
             Err(BencodeParseError::from((
-                BencodeParseErrorType::ParseByteString,
+                BencodeParseErrorType::ByteString,
                 1 as usize,
                 "2:a".as_bytes()
             )))
@@ -568,7 +556,7 @@ mod tests {
         assert_eq!(
             bdecode(b"2:abc"),
             Err(BencodeParseError::from((
-                BencodeParseErrorType::ParseEnd,
+                BencodeParseErrorType::End,
                 4 as usize,
                 "2:abc".as_bytes()
             )))
